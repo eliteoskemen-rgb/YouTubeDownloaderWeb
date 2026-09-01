@@ -1,6 +1,5 @@
 import asyncio
 import json
-import os
 import re
 import shutil
 import uuid
@@ -15,7 +14,7 @@ from pydantic import BaseModel
 BASE = Path(__file__).resolve().parent
 DOWNLOADS = BASE / "downloads"
 
-DOWNLOADS.mkdir(exist_ok=True)
+DOWNLOADS.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="YouTube Downloader Online")
 
@@ -30,24 +29,20 @@ tasks = {}
 URL_RE = re.compile(r"^https?://", re.I)
 
 
-# ---------------------------------------------------------
-# yt-dlp configuration
-# ---------------------------------------------------------
+# =========================================================
+# YT-DLP
+# =========================================================
 
 YT_ARGS = [
     "--js-runtimes",
     "node",
-
-    "--extractor-args",
-    "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416;youtube:player-client=mweb",
-
     "--no-playlist",
 ]
 
 
-# ---------------------------------------------------------
-# Models
-# ---------------------------------------------------------
+# =========================================================
+# MODELS
+# =========================================================
 
 class Link(BaseModel):
     url: str
@@ -58,18 +53,18 @@ class Download(Link):
     mode: str = "video"
 
 
-# ---------------------------------------------------------
-# Frontend
-# ---------------------------------------------------------
+# =========================================================
+# FRONTEND
+# =========================================================
 
 @app.get("/")
 def index():
     return FileResponse(BASE / "index.html")
 
 
-# ---------------------------------------------------------
-# Tasks
-# ---------------------------------------------------------
+# =========================================================
+# TASK
+# =========================================================
 
 def safe_task():
     tid = uuid.uuid4().hex
@@ -87,9 +82,9 @@ def safe_task():
     return tid
 
 
-# ---------------------------------------------------------
-# Video information
-# ---------------------------------------------------------
+# =========================================================
+# VIDEO INFO
+# =========================================================
 
 @app.post("/api/info")
 async def info(x: Link):
@@ -97,7 +92,10 @@ async def info(x: Link):
     url = x.url.strip()
 
     if not URL_RE.match(url):
-        raise HTTPException(400, "Неверная ссылка")
+        raise HTTPException(
+            400,
+            "Неверная ссылка",
+        )
 
     cmd = [
         "yt-dlp",
@@ -120,11 +118,11 @@ async def info(x: Link):
         error = err.decode(
             "utf-8",
             "replace",
-        )[-2000:]
+        )
 
         raise HTTPException(
             400,
-            error,
+            error[-3000:],
         )
 
     try:
@@ -150,9 +148,9 @@ async def info(x: Link):
     }
 
 
-# ---------------------------------------------------------
-# Start download
-# ---------------------------------------------------------
+# =========================================================
+# START DOWNLOAD
+# =========================================================
 
 @app.post("/api/download")
 async def download(x: Download):
@@ -168,20 +166,17 @@ async def download(x: Download):
     tid = safe_task()
 
     asyncio.create_task(
-        run_download(
-            tid,
-            x,
-        )
+        run_download(tid, x)
     )
 
     return {
-        "id": tid,
+        "id": tid
     }
 
 
-# ---------------------------------------------------------
-# Download worker
-# ---------------------------------------------------------
+# =========================================================
+# DOWNLOAD
+# =========================================================
 
 async def run_download(tid, x):
 
@@ -196,9 +191,9 @@ async def run_download(tid, x):
 
     try:
 
-        # -------------------------
-        # Audio
-        # -------------------------
+        # -------------------------------------------------
+        # AUDIO
+        # -------------------------------------------------
 
         if x.mode == "audio":
 
@@ -215,9 +210,9 @@ async def run_download(tid, x):
                 "192K",
             ]
 
-        # -------------------------
-        # Video
-        # -------------------------
+        # -------------------------------------------------
+        # VIDEO
+        # -------------------------------------------------
 
         else:
 
@@ -225,7 +220,7 @@ async def run_download(tid, x):
 
                 fmt = [
                     "-f",
-                    "bestvideo+bestaudio/best",
+                    "bestvideo*+bestaudio/best",
 
                     "--merge-output-format",
                     "mp4",
@@ -237,16 +232,14 @@ async def run_download(tid, x):
                     height = int(x.quality)
 
                 except ValueError:
-
                     height = 720
 
                 fmt = [
                     "-f",
                     (
                         f"bestvideo[height<={height}]"
-                        f"+bestaudio/best"
-                        f"[height<={height}]"
-                        f"/best[height<={height}]"
+                        f"+bestaudio/"
+                        f"best[height<={height}]"
                         f"/best"
                     ),
 
@@ -254,19 +247,16 @@ async def run_download(tid, x):
                     "mp4",
                 ]
 
-        # -------------------------
-        # Output
-        # -------------------------
+        # -------------------------------------------------
+        # OUTPUT
+        # -------------------------------------------------
 
         output = str(
             work / "%(title)s.%(ext)s"
         )
 
-        ffmpeg = shutil.which("ffmpeg")
-
         cmd = [
             "yt-dlp",
-
             *YT_ARGS,
 
             "--newline",
@@ -278,25 +268,25 @@ async def run_download(tid, x):
             output,
         ]
 
+        ffmpeg = shutil.which("ffmpeg")
+
         if ffmpeg:
-            cmd.extend(
-                [
-                    "--ffmpeg-location",
-                    ffmpeg,
-                ]
-            )
 
-        cmd.append(x.url)
+            cmd.extend([
+                "--ffmpeg-location",
+                ffmpeg,
+            ])
 
-        # -------------------------
-        # Start process
-        # -------------------------
+        cmd.append(url)
+
+        # -------------------------------------------------
+        # PROCESS
+        # -------------------------------------------------
 
         process = await asyncio.create_subprocess_exec(
             *cmd,
 
             stdout=asyncio.subprocess.PIPE,
-
             stderr=asyncio.subprocess.STDOUT,
         )
 
@@ -312,10 +302,20 @@ async def run_download(tid, x):
                 "replace",
             ).strip()
 
-            # Progress
+            # ---------------------------------------------
+            # SAVE LAST ERROR/OUTPUT
+            # ---------------------------------------------
+
+            if "ERROR:" in text:
+
+                task["error"] = text
+
+            # ---------------------------------------------
+            # PROGRESS
+            # ---------------------------------------------
+
             match = re.search(
-                r"\[download\]\s+([\d.]+)%.*?"
-                r"at\s+(.+?)\s+ETA\s+(.+)",
+                r"\[download\]\s+([\d.]+)%",
                 text,
             )
 
@@ -325,32 +325,51 @@ async def run_download(tid, x):
                     match.group(1)
                 )
 
-                task["speed"] = match.group(2)
-
-                task["eta"] = match.group(3)
-
                 task["status"] = "downloading"
 
-            if "Destination:" in text:
+            speed = re.search(
+                r"at\s+(.+?)\s+ETA\s+(.+)",
+                text,
+            )
 
-                task["status"] = "processing"
+            if speed:
 
-            if "[Merger]" in text:
+                task["speed"] = speed.group(1)
+                task["eta"] = speed.group(2)
+
+            # ---------------------------------------------
+            # PROCESSING
+            # ---------------------------------------------
+
+            if (
+                "Destination:" in text
+                or "[Merger]" in text
+                or "[ExtractAudio]" in text
+            ):
 
                 task["status"] = "processing"
 
         return_code = await process.wait()
 
+        # -------------------------------------------------
+        # ERROR
+        # -------------------------------------------------
+
         if return_code != 0:
 
-            raise RuntimeError(
-                "YouTube не разрешил загрузку "
-                "или yt-dlp завершился с ошибкой"
-            )
+            error = task["error"]
 
-        # -------------------------
-        # Find resulting file
-        # -------------------------
+            if not error:
+                error = (
+                    "yt-dlp завершился с ошибкой. "
+                    "YouTube мог заблокировать запрос."
+                )
+
+            raise RuntimeError(error)
+
+        # -------------------------------------------------
+        # FIND FILE
+        # -------------------------------------------------
 
         candidates = [
             p
@@ -369,28 +388,25 @@ async def run_download(tid, x):
             key=lambda p: p.stat().st_mtime,
         )
 
-        task.update(
-            {
-                "status": "done",
-                "percent": 100,
-                "filename": file_path.name,
-                "file": str(file_path),
-            }
-        )
+        task.update({
+            "status": "done",
+            "percent": 100,
+            "filename": file_path.name,
+            "file": str(file_path),
+            "error": "",
+        })
 
     except Exception as error:
 
-        task.update(
-            {
-                "status": "error",
-                "error": str(error),
-            }
-        )
+        task.update({
+            "status": "error",
+            "error": str(error),
+        })
 
 
-# ---------------------------------------------------------
-# Progress
-# ---------------------------------------------------------
+# =========================================================
+# PROGRESS
+# =========================================================
 
 @app.get("/api/progress/{tid}")
 def progress(tid: str):
@@ -405,9 +421,9 @@ def progress(tid: str):
     return tasks[tid]
 
 
-# ---------------------------------------------------------
-# File
-# ---------------------------------------------------------
+# =========================================================
+# FILE
+# =========================================================
 
 @app.get("/api/file/{tid}")
 def file(tid: str):
@@ -425,9 +441,7 @@ def file(tid: str):
             "Файл ещё не готов",
         )
 
-    file_path = Path(
-        task["file"]
-    )
+    file_path = Path(task["file"])
 
     if not file_path.exists():
 
