@@ -115,15 +115,23 @@ async def get_title(url: str):
 
 
 async def get_qualities(url: str):
-    rc, text = await cli_output(["-L", url], timeout=120)
+    rc, text = await cli_output(["--diag", url], timeout=150)
+
+    if rc != 0:
+        raise RuntimeError(
+            "Диагностика ytcui-dl:\n\n" +
+            (text[-9000:] or "Нет диагностического вывода")
+        )
 
     qualities = parse_qualities(text)
 
-    if rc != 0 and not qualities:
-        raise RuntimeError(text[-5000:] or "Не удалось получить форматы.")
+    if not qualities:
+        raise RuntimeError(
+            "ytcui-dl не нашёл playable formats.\n\n" +
+            text[-9000:]
+        )
 
     return qualities
-
 
 def safe_file_name(job_id: str, media_type: str):
     return DOWNLOAD_DIR / f"{job_id}.{'mp3' if media_type == 'audio' else 'mp4'}"
