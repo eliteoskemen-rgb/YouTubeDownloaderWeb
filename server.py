@@ -335,6 +335,7 @@ async def download(req: DownloadRequest):
         raise HTTPException(502, str(exc))
 
 
+
 @app.get("/api/file/{token}")
 async def download_file(token: str):
     item = download_links.get(token)
@@ -349,64 +350,125 @@ async def download_file(token: str):
     filename = item["filename"]
     content_type = item["content_type"]
 
-    async def stream():
+    # Download the upstream file completely to disk first.
+    # This prevents the browser from receiving a 0-byte "download"
+    # when googlevideo/Soclip rejects the upstream request midway.
+    temp_dir = BASE_DIR / "downloads"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    token_dir = temp_dir / token
+    token_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = token_dir / filename
+
+    try:
         timeout = httpx.Timeout(
-            900.0,
+            1800.0,
             connect=30.0,
+            read=180.0,
+            write=180.0,
+            pool=30.0,
         )
 
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
+            http2=True,
         ) as client:
             async with client.stream(
                 "GET",
                 target_url,
                 headers={
-                    "User-Agent": "Mozilla/5.0",
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/150.0 Safari/537.36"
+                    ),
+                    "Accept": "*/*",
+                    "Accept-Encoding": "identity",
+                    "Referer": "https://www.youtube.com/",
                 },
             ) as response:
 
                 if response.status_code >= 400:
                     body = await response.aread()
-
                     raise RuntimeError(
-                        "Источник видео вернул HTTP "
+                        f"Источник Soclip вернул HTTP "
                         f"{response.status_code}: "
-                        f"{body[:800].decode('utf-8', 'replace')}"
+                        f"{body[:1000].decode('utf-8', 'replace')}"
                     )
 
-                async for chunk in response.aiter_bytes(
-                    1024 * 1024
-                ):
-                    yield chunk
+                content_length = response.headers.get(
+                    "content-length"
+                )
 
-    ascii_name = re.sub(
-        r"[^A-Za-z0-9._-]+",
-        "_",
-        filename,
-    ).strip("_") or "download"
+                with file_path.open("wb") as out_file:
+                    async for chunk in response.aiter_bytes(
+                        4 * 1024 * 1024
+                    ):
+                        out_file.write(chunk)
 
-    disposition = (
-        f'attachment; filename="{ascii_name}"; '
-        f"filename*=UTF-8''{quote(filename, safe='')}"
-    )
+                if not file_path.exists() or file_path.stat().st_size == 0:
+                    raise RuntimeError(
+                        "Источник вернул пустой файл."
+                    )
 
-    # Delete only after the stream has finished.
-    async def stream_once():
+                if content_length:
+                    try:
+                        expected = int(content_length)
+                        actual = file_path.stat().st_size
+                        if expected > 0 and actual != expected:
+                            raise RuntimeError(
+                                f"Неполная загрузка: получено "
+                                f"{actual} из {expected} байт."
+                            )
+                    except ValueError:
+                        pass
+
+        # The token is one-time only, but remove it after a successful
+        # upstream transfer, not before it.
+        download_links.pop(token, None)
+
+        ascii_name = re.sub(
+            r"[^A-Za-z0-9._-]+",
+            "_",
+            filename,
+        ).strip("_") or "download"
+
+        disposition = (
+            f'attachment; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{quote(filename, safe='')}"
+        )
+
+        response = FileResponse(
+            path=file_path,
+            media_type=content_type,
+            filename=filename,
+            headers={
+                "Content-Disposition": disposition,
+                "Cache-Control": "no-store, no-cache, must-revalidate",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+        # Best-effort cleanup after response completion isn't trivial with
+        # FileResponse; leave the file in the ephemeral Render filesystem.
+        return response
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
         try:
-            async for chunk in stream():
-                yield chunk
-        finally:
-            download_links.pop(token, None)
+            if file_path.exists():
+                file_path.unlink()
+            if token_dir.exists() and not any(token_dir.iterdir()):
+                token_dir.rmdir()
+        except Exception:
+            pass
 
-    return StreamingResponse(
-        stream_once(),
-        media_type=content_type,
-        headers={
-            "Content-Disposition": disposition,
-            "Cache-Control": "no-store, no-cache, must-revalidate",
-            "Pragma": "no-cache",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+        raise HTTPException(
+            502,
+            f"Не удалось скачать файл с Soclip: {exc}",
+        )
