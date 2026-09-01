@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -279,3 +279,48 @@ async def download(req: DownloadRequest):
         raise
     except Exception as exc:
         raise HTTPException(502, str(exc))
+
+
+@app.get("/api/file/{token}")
+async def download_file(token: str):
+    item = download_links.get(token)
+
+    if not item:
+        raise HTTPException(404, "Ссылка на файл истекла или не найдена.")
+
+    target_url = item["url"]
+    filename = item["filename"]
+    content_type = item["content_type"]
+
+    async def stream():
+        timeout = httpx.Timeout(600.0, connect=30.0)
+        async with httpx.AsyncClient(
+            timeout=timeout,
+            follow_redirects=True,
+        ) as client:
+            try:
+                async with client.stream("GET", target_url) as response:
+                    if response.status_code >= 400:
+                        body = await response.aread()
+                        raise RuntimeError(
+                            f"Источник Soclip вернул HTTP {response.status_code}: "
+                            f"{body[:500].decode('utf-8', 'replace')}"
+                        )
+
+                    async for chunk in response.aiter_bytes(1024 * 1024):
+                        yield chunk
+            finally:
+                # One-time link: remove after transfer finishes.
+                download_links.pop(token, None)
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Cache-Control": "no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
+
+    return StreamingResponse(
+        stream(),
+        media_type=content_type,
+        headers=headers,
+    )
