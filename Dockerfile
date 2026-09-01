@@ -1,30 +1,23 @@
-FROM node:20-bookworm
+FROM python:3.12-slim
 
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip ffmpeg git \
+    && apt-get install -y --no-install-recommends \
+       ffmpeg \
+       nodejs \
+       npm \
+       curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 
-RUN pip3 install --break-system-packages --no-cache-dir -r requirements.txt
-
-RUN git clone --depth 1 --branch 1.3.1 \
-    https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git \
-    /opt/bgutil
-
-WORKDIR /opt/bgutil/server
-
-RUN npm ci --omit=dev \
-    && npx tsc
-
-WORKDIR /app
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-ENV YT_DLP_POT_PROVIDER_URL=http://127.0.0.1:4416
+RUN mkdir -p /app/downloads
 
-RUN chmod +x start.sh
+EXPOSE 8000
 
-CMD ["./start.sh"]
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8000}"]
