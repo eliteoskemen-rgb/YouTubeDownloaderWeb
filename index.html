@@ -93,7 +93,7 @@ function fail(text){state("Ошибка",0,"err");$("msg").textContent=text;$("s
 function fill(formats){
   const s=$("quality");s.innerHTML="";
   const rank=x=>parseInt(String(x).replace("p",""))||0;
-  const a=[...(formats||[])].filter((v,i,arr)=>arr.findIndex(x=>x.quality===v.quality)===i).sort((a,b)=>rank(b.quality)-rank(a.quality);
+  const a=[...(formats||[])].filter((v,i,arr)=>arr.findIndex(x=>x.quality===v.quality)===i).sort((a,b)=>rank(b.quality)-rank(a.quality));
   a.forEach(f=>{const o=document.createElement("option");o.value=f.quality;o.textContent=f.file_size_str?`${f.quality} · ${f.file_size_str}`:f.quality;s.appendChild(o);});
   s.disabled=!a.length;
   if(a.length)s.value=a[0].quality;
