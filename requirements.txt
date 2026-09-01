@@ -1,5 +1,4 @@
 fastapi
 uvicorn[standard]
-pydantic
-yt-dlp
-bgutil-ytdlp-pot-provider
+yt-dlp[default]
+bgutil-ytdlp-pot-provider==1.3.2

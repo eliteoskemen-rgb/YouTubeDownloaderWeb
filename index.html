@@ -1,73 +1,1328 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>YouTube Downloader — Online</title>
-  <link rel="stylesheet" href="/static/style.css">
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>YouTube Downloader — Online</title>
+
+    <style>
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+
+            font-family:
+                Inter,
+                Arial,
+                sans-serif;
+
+            color: white;
+
+            background:
+                radial-gradient(
+                    circle at 15% 20%,
+                    #1c1948 0,
+                    transparent 35%
+                ),
+                radial-gradient(
+                    circle at 90% 90%,
+                    #073047 0,
+                    transparent 35%
+                ),
+                #070911;
+        }
+
+        .container {
+            width: min(
+                1100px,
+                calc(100% - 40px)
+            );
+
+            margin: 0 auto;
+        }
+
+        header {
+            padding: 28px 0;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .logo {
+            width: 42px;
+            height: 42px;
+
+            display: flex;
+            align-items: center;
+            justify-content: center;
+
+            border-radius: 13px;
+
+            background:
+                linear-gradient(
+                    135deg,
+                    #6b5cff,
+                    #27c8ff
+                );
+
+            font-size: 20px;
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 800;
+        }
+
+        .brand-subtitle {
+            margin-top: 3px;
+
+            color: #8d91a5;
+
+            font-size: 12px;
+        }
+
+        .status {
+            margin-left: auto;
+
+            padding: 8px 13px;
+
+            border: 1px solid #22273a;
+
+            border-radius: 999px;
+
+            background: #101421;
+
+            color: #9da4b8;
+
+            font-size: 12px;
+        }
+
+        main {
+            display: grid;
+
+            grid-template-columns:
+                1fr 1fr;
+
+            gap: 50px;
+
+            align-items: center;
+
+            min-height: 680px;
+        }
+
+        .hero-label {
+            color: #8fa0ff;
+
+            letter-spacing: 4px;
+
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        h1 {
+            margin: 22px 0 18px;
+
+            font-size:
+                clamp(48px, 6vw, 78px);
+
+            line-height: .95;
+
+            letter-spacing: -4px;
+        }
+
+        h1 span {
+            background:
+                linear-gradient(
+                    90deg,
+                    #8b63ff,
+                    #3dc8ff
+                );
+
+            -webkit-background-clip: text;
+            background-clip: text;
+
+            color: transparent;
+        }
+
+        .hero-text {
+            max-width: 500px;
+
+            color: #9da3b6;
+
+            font-size: 16px;
+
+            line-height: 1.7;
+        }
+
+        .tags {
+            display: flex;
+
+            gap: 8px;
+
+            margin-top: 25px;
+        }
+
+        .tag {
+            padding: 7px 11px;
+
+            border:
+                1px solid #252a3b;
+
+            border-radius: 9px;
+
+            color: #9097ac;
+
+            background: #0e111b;
+
+            font-size: 11px;
+        }
+
+        .card {
+            padding: 25px;
+
+            border:
+                1px solid #252a3a;
+
+            border-radius: 22px;
+
+            background:
+                rgba(14, 17, 28, .86);
+
+            box-shadow:
+                0 30px 100px
+                rgba(0, 0, 0, .35);
+        }
+
+        label {
+            display: block;
+
+            margin-bottom: 8px;
+
+            color: #9298aa;
+
+            font-size: 12px;
+        }
+
+        .url-row {
+            display: flex;
+
+            gap: 8px;
+        }
+
+        input,
+        select {
+            width: 100%;
+
+            border:
+                1px solid #252a3a;
+
+            border-radius: 12px;
+
+            background: #080b13;
+
+            color: white;
+
+            outline: none;
+
+            padding: 14px;
+
+            font-size: 14px;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: #665cff;
+        }
+
+        .inspect {
+            width: 50px;
+
+            border: 0;
+
+            border-radius: 12px;
+
+            background:
+                linear-gradient(
+                    135deg,
+                    #6b5cff,
+                    #2fc6ff
+                );
+
+            color: white;
+
+            font-size: 20px;
+
+            cursor: pointer;
+        }
+
+        .options {
+            display: grid;
+
+            grid-template-columns:
+                1fr 1fr;
+
+            gap: 12px;
+
+            margin-top: 16px;
+        }
+
+        .preview {
+            display: none;
+
+            margin-top: 18px;
+
+            overflow: hidden;
+
+            border:
+                1px solid #292e40;
+
+            border-radius: 15px;
+
+            background: #090c14;
+        }
+
+        .preview img {
+            display: block;
+
+            width: 100%;
+
+            aspect-ratio: 16 / 9;
+
+            object-fit: cover;
+        }
+
+        .preview-info {
+            padding: 13px 15px;
+        }
+
+        .preview-title {
+            font-size: 14px;
+            font-weight: 700;
+
+            line-height: 1.4;
+        }
+
+        .preview-channel {
+            margin-top: 5px;
+
+            color: #81889c;
+
+            font-size: 12px;
+        }
+
+        .download {
+            width: 100%;
+
+            margin-top: 16px;
+
+            padding: 15px;
+
+            border: 0;
+
+            border-radius: 12px;
+
+            background:
+                linear-gradient(
+                    90deg,
+                    #6d5bff,
+                    #2fc6ff
+                );
+
+            color: white;
+
+            font-size: 14px;
+            font-weight: 800;
+
+            cursor: pointer;
+        }
+
+        .download:disabled,
+        .inspect:disabled {
+            opacity: .5;
+
+            cursor: not-allowed;
+        }
+
+        .progress-box {
+            margin-top: 18px;
+
+            padding: 15px;
+
+            border:
+                1px solid #202638;
+
+            border-radius: 15px;
+
+            background: #090c14;
+        }
+
+        .progress-head {
+            display: flex;
+
+            justify-content: space-between;
+
+            color: #9ca3b5;
+
+            font-size: 12px;
+        }
+
+        .bar {
+            height: 7px;
+
+            margin-top: 12px;
+
+            overflow: hidden;
+
+            border-radius: 99px;
+
+            background: #1c2231;
+        }
+
+        .bar-inner {
+            width: 0%;
+
+            height: 100%;
+
+            border-radius: 99px;
+
+            background:
+                linear-gradient(
+                    90deg,
+                    #6d5bff,
+                    #2fc6ff
+                );
+
+            transition:
+                width .25s ease;
+        }
+
+        .details {
+            display: flex;
+
+            justify-content: space-between;
+
+            margin-top: 10px;
+
+            color: #6f778b;
+
+            font-size: 11px;
+        }
+
+        .error {
+            display: none;
+
+            margin-top: 15px;
+
+            padding: 13px;
+
+            border:
+                1px solid #572b39;
+
+            border-radius: 12px;
+
+            background: #211018;
+
+            color: #ff8096;
+
+            font-size: 12px;
+
+            line-height: 1.5;
+
+            white-space: pre-wrap;
+
+            word-break: break-word;
+        }
+
+        .success {
+            display: none;
+
+            margin-top: 15px;
+
+            padding: 13px;
+
+            border:
+                1px solid #204f3c;
+
+            border-radius: 12px;
+
+            background: #0d2119;
+
+            color: #68e3ad;
+
+            font-size: 12px;
+        }
+
+        footer {
+            padding: 30px 0;
+
+            text-align: center;
+
+            color: #555d70;
+
+            font-size: 11px;
+        }
+
+        @media (max-width: 850px) {
+
+            main {
+                grid-template-columns: 1fr;
+
+                padding: 40px 0;
+            }
+
+            h1 {
+                font-size: 54px;
+            }
+
+            .status {
+                display: none;
+            }
+
+        }
+
+    </style>
 </head>
+
 <body>
-<div class="ambient a"></div><div class="ambient b"></div>
-<main class="app">
-  <header class="topbar">
-    <div class="brand">
-      <div class="brand-icon">▶</div>
-      <div><div class="brand-title">YouTube Downloader</div><div class="brand-subtitle">Быстро. Красиво. Без лишних действий.</div></div>
-    </div>
-    <div class="header-actions">
-      <div class="status-pill"><span class="dot"></span><span id="connection">Готов</span></div>
-    </div>
-  </header>
 
-  <section class="hero">
-    <div class="hero-copy">
-      <div class="eyebrow">ONLINE VIDEO DOWNLOADER</div>
-      <h1>Скачивай видео<br><span>в один клик.</span></h1>
-      <p>Вставь ссылку, выбери качество и нажми скачать.</p>
-      <div class="mini-features"><span>4K</span><span>2K</span><span>MP4</span><span>MP3</span><span>ONLINE</span></div>
-    </div>
+<div class="container">
 
-    <div class="download-card glass">
-      <label class="label">Ссылка на видео</label>
-      <div class="url-row">
-        <input id="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=...">
-        <button class="icon-btn" id="pasteBtn" title="Вставить">↘</button>
-      </div>
+    <header>
 
-      <div id="preview" class="preview hidden">
-        <div class="thumb-wrap"><img id="thumb" alt=""><div class="thumb-badge" id="thumbQuality">Video</div></div>
-        <div class="preview-info"><div id="videoTitle" class="video-title">Видео</div><div id="videoMeta" class="video-meta">—</div></div>
-      </div>
+        <div class="brand">
 
-      <div class="controls">
-        <div><label class="label">Качество</label>
-          <select id="quality">
-            <option value="best">Лучшее доступное</option>
-            <option value="2160">4K · 2160p</option>
-            <option value="1440">2K · 1440p</option>
-            <option value="1080">1080p</option>
-            <option value="720">720p</option>
-            <option value="480">480p</option>
-            <option value="360">360p</option>
-          </select>
+            <div class="logo">▶</div>
+
+            <div>
+                <div class="brand-title">
+                    YouTube Downloader
+                </div>
+
+                <div class="brand-subtitle">
+                    Быстро. Красиво. Без лишних действий.
+                </div>
+            </div>
+
+            <div
+                class="status"
+                id="status"
+            >
+                ● Готов
+            </div>
+
         </div>
-        <div><label class="label">Тип</label>
-          <select id="mode"><option value="video">Видео MP4</option><option value="audio">Только MP3</option></select>
-        </div>
-      </div>
 
-      <button id="downloadBtn" class="download-btn"><span class="btn-shine"></span><span class="btn-icon">↓</span>Скачать</button>
+    </header>
 
-      <div id="progressBox" class="progress-box hidden">
-        <div class="progress-top"><span id="progressStatus">Скачивание…</span><strong id="percent">0%</strong></div>
-        <div class="progress-track"><div id="progressBar"></div></div>
-        <div class="progress-bottom"><span id="filename">—</span><span><span id="speed">—</span> · ETA <span id="eta">--:--</span></span></div>
-      </div>
-      <div id="message" class="message"></div>
-    </div>
-  </section>
-  <footer>© 2026 YouTube Downloader · Online</footer>
-</main>
-<script src="/static/app.js"></script>
+
+    <main>
+
+        <section>
+
+            <div class="hero-label">
+                ONLINE VIDEO DOWNLOADER
+            </div>
+
+            <h1>
+                Скачивай видео<br>
+                <span>в один клик.</span>
+            </h1>
+
+            <div class="hero-text">
+                Вставь ссылку, проверь видео,
+                выбери качество и скачай готовый файл.
+            </div>
+
+            <div class="tags">
+                <div class="tag">4K</div>
+                <div class="tag">2K</div>
+                <div class="tag">MP4</div>
+                <div class="tag">MP3</div>
+                <div class="tag">ONLINE</div>
+            </div>
+
+        </section>
+
+
+        <section class="card">
+
+            <label>
+                Ссылка на видео
+            </label>
+
+            <div class="url-row">
+
+                <input
+                    id="url"
+                    type="text"
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    autocomplete="off"
+                >
+
+                <button
+                    class="inspect"
+                    id="inspect"
+                    title="Проверить видео"
+                >
+                    ↘
+                </button>
+
+            </div>
+
+
+            <div class="options">
+
+                <div>
+
+                    <label>
+                        Качество
+                    </label>
+
+                    <select id="quality">
+
+                        <option value="best">
+                            Лучшее доступное
+                        </option>
+
+                        <option value="2160">
+                            4K
+                        </option>
+
+                        <option value="1440">
+                            2K
+                        </option>
+
+                        <option value="1080">
+                            1080p
+                        </option>
+
+                        <option value="720">
+                            720p
+                        </option>
+
+                        <option value="480">
+                            480p
+                        </option>
+
+                    </select>
+
+                </div>
+
+
+                <div>
+
+                    <label>
+                        Тип
+                    </label>
+
+                    <select id="mode">
+
+                        <option value="video">
+                            Видео MP4
+                        </option>
+
+                        <option value="audio">
+                            Аудио MP3
+                        </option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+
+            <div
+                class="preview"
+                id="preview"
+            >
+
+                <img
+                    id="thumbnail"
+                    alt="Превью видео"
+                >
+
+                <div class="preview-info">
+
+                    <div
+                        class="preview-title"
+                        id="title"
+                    >
+                    </div>
+
+                    <div
+                        class="preview-channel"
+                        id="channel"
+                    >
+                    </div>
+
+                </div>
+
+            </div>
+
+
+            <button
+                class="download"
+                id="download"
+            >
+                ↓ Скачать
+            </button>
+
+
+            <div class="progress-box">
+
+                <div class="progress-head">
+
+                    <span id="progressStatus">
+                        Ожидание...
+                    </span>
+
+                    <span id="percent">
+                        0%
+                    </span>
+
+                </div>
+
+                <div class="bar">
+
+                    <div
+                        class="bar-inner"
+                        id="bar"
+                    ></div>
+
+                </div>
+
+                <div class="details">
+
+                    <span id="speed">
+                        —
+                    </span>
+
+                    <span id="eta">
+                        ETA —
+                    </span>
+
+                </div>
+
+            </div>
+
+
+            <div
+                class="error"
+                id="error"
+            ></div>
+
+
+            <div
+                class="success"
+                id="success"
+            >
+                Файл готов. Скачивание началось.
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <footer>
+        © 2026 YouTube Downloader · Online
+    </footer>
+
+</div>
+
+
+<script>
+
+const urlInput = document.getElementById("url");
+
+const inspectButton =
+    document.getElementById("inspect");
+
+const downloadButton =
+    document.getElementById("download");
+
+const quality =
+    document.getElementById("quality");
+
+const mode =
+    document.getElementById("mode");
+
+const preview =
+    document.getElementById("preview");
+
+const thumbnail =
+    document.getElementById("thumbnail");
+
+const title =
+    document.getElementById("title");
+
+const channel =
+    document.getElementById("channel");
+
+const errorBox =
+    document.getElementById("error");
+
+const successBox =
+    document.getElementById("success");
+
+const progressStatus =
+    document.getElementById("progressStatus");
+
+const percent =
+    document.getElementById("percent");
+
+const bar =
+    document.getElementById("bar");
+
+const speed =
+    document.getElementById("speed");
+
+const eta =
+    document.getElementById("eta");
+
+const status =
+    document.getElementById("status");
+
+
+let videoInfo = null;
+
+
+function setError(message) {
+
+    errorBox.textContent =
+        message || "Неизвестная ошибка";
+
+    errorBox.style.display = "block";
+
+    successBox.style.display = "none";
+}
+
+
+function clearMessages() {
+
+    errorBox.style.display = "none";
+
+    successBox.style.display = "none";
+}
+
+
+function getVideoId(url) {
+
+    try {
+
+        const parsed =
+            new URL(url);
+
+        if (
+            parsed.hostname.includes(
+                "youtube.com"
+            )
+        ) {
+
+            const v =
+                parsed.searchParams.get("v");
+
+            if (v) {
+                return v;
+            }
+
+            const parts =
+                parsed.pathname.split(
+                    "/"
+                ).filter(Boolean);
+
+            const index =
+                parts.indexOf("shorts");
+
+            if (
+                index !== -1 &&
+                parts[index + 1]
+            ) {
+                return parts[index + 1];
+            }
+
+            const embed =
+                parts.indexOf("embed");
+
+            if (
+                embed !== -1 &&
+                parts[embed + 1]
+            ) {
+                return parts[embed + 1];
+            }
+        }
+
+
+        if (
+            parsed.hostname ===
+                "youtu.be"
+        ) {
+
+            return parsed.pathname
+                .split("/")
+                .filter(Boolean)[0] || "";
+        }
+
+    } catch (e) {
+        return "";
+    }
+
+    return "";
+}
+
+
+function showThumbnailFromUrl() {
+
+    const id =
+        getVideoId(
+            urlInput.value.trim()
+        );
+
+    if (!id) {
+        return;
+    }
+
+    /*
+     * YouTube exposes public thumbnail
+     * URLs through i.ytimg.com.
+     */
+
+    thumbnail.src =
+        "https://i.ytimg.com/vi/"
+        + encodeURIComponent(id)
+        + "/hqdefault.jpg";
+
+    preview.style.display =
+        "block";
+}
+
+
+async function getInfo() {
+
+    clearMessages();
+
+    const url =
+        urlInput.value.trim();
+
+    if (!url) {
+
+        setError(
+            "Вставь ссылку на YouTube."
+        );
+
+        return false;
+    }
+
+
+    showThumbnailFromUrl();
+
+
+    inspectButton.disabled = true;
+
+    status.textContent =
+        "● Получаю информацию...";
+
+
+    try {
+
+        const response =
+            await fetch(
+                "/api/info",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+                        url: url
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Не удалось получить информацию"
+            );
+        }
+
+
+        videoInfo = data;
+
+
+        title.textContent =
+            data.title || "Видео";
+
+        channel.textContent =
+            data.uploader || "";
+
+
+        if (data.thumbnail) {
+
+            thumbnail.src =
+                data.thumbnail;
+
+        }
+
+
+        preview.style.display =
+            "block";
+
+
+        status.textContent =
+            "● Видео найдено";
+
+
+        return true;
+
+    } catch (error) {
+
+        status.textContent =
+            "● Ошибка";
+
+        setError(
+            error.message
+        );
+
+        return false;
+
+    } finally {
+
+        inspectButton.disabled =
+            false;
+    }
+}
+
+
+inspectButton.addEventListener(
+    "click",
+    getInfo
+);
+
+
+urlInput.addEventListener(
+    "paste",
+    () => {
+
+        setTimeout(
+            showThumbnailFromUrl,
+            50
+        );
+
+    }
+);
+
+
+async function startDownload() {
+
+    clearMessages();
+
+    const url =
+        urlInput.value.trim();
+
+
+    if (!url) {
+
+        setError(
+            "Вставь ссылку на YouTube."
+        );
+
+        return;
+    }
+
+
+    downloadButton.disabled =
+        true;
+
+
+    inspectButton.disabled =
+        true;
+
+
+    status.textContent =
+        "● Подготовка...";
+
+
+    progressStatus.textContent =
+        "Получаю информацию...";
+
+
+    percent.textContent =
+        "0%";
+
+    bar.style.width =
+        "0%";
+
+
+    try {
+
+        /*
+         * First make sure the video
+         * can be extracted.
+         */
+
+        if (!videoInfo) {
+
+            const ok =
+                await getInfo();
+
+            if (!ok) {
+                return;
+            }
+
+        }
+
+
+        const response =
+            await fetch(
+                "/api/download",
+                {
+                    method: "POST",
+
+                    headers: {
+                        "Content-Type":
+                            "application/json"
+                    },
+
+                    body: JSON.stringify({
+
+                        url: url,
+
+                        quality:
+                            quality.value,
+
+                        mode:
+                            mode.value
+
+                    })
+                }
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Не удалось начать загрузку"
+            );
+        }
+
+
+        const taskId =
+            data.id;
+
+
+        status.textContent =
+            "● Загрузка";
+
+
+        await poll(taskId);
+
+
+    } catch (error) {
+
+        status.textContent =
+            "● Ошибка";
+
+        setError(
+            error.message
+        );
+
+    } finally {
+
+        downloadButton.disabled =
+            false;
+
+        inspectButton.disabled =
+            false;
+
+    }
+}
+
+
+async function poll(taskId) {
+
+    while (true) {
+
+        const response =
+            await fetch(
+                "/api/progress/"
+                + taskId
+            );
+
+
+        const data =
+            await response.json();
+
+
+        if (!response.ok) {
+
+            throw new Error(
+                data.detail ||
+                "Ошибка статуса"
+            );
+
+        }
+
+
+        const p =
+            Number(
+                data.percent || 0
+            );
+
+
+        percent.textContent =
+            Math.round(p) + "%";
+
+
+        bar.style.width =
+            Math.min(
+                100,
+                Math.max(0, p)
+            ) + "%";
+
+
+        speed.textContent =
+            data.speed || "—";
+
+
+        eta.textContent =
+            data.eta
+                ? "ETA " + data.eta
+                : "ETA —";
+
+
+        if (
+            data.status ===
+            "starting"
+        ) {
+
+            progressStatus.textContent =
+                "Запуск...";
+
+        } else if (
+            data.status ===
+            "downloading"
+        ) {
+
+            progressStatus.textContent =
+                "Скачивание...";
+
+        } else if (
+            data.status ===
+            "processing"
+        ) {
+
+            progressStatus.textContent =
+                "Обработка...";
+
+        } else if (
+            data.status ===
+            "done"
+        ) {
+
+            progressStatus.textContent =
+                "Готово";
+
+            status.textContent =
+                "● Готово";
+
+            bar.style.width =
+                "100%";
+
+            percent.textContent =
+                "100%";
+
+
+            successBox.style.display =
+                "block";
+
+
+            /*
+             * Trigger browser download.
+             */
+
+            const link =
+                document.createElement(
+                    "a"
+                );
+
+            link.href =
+                "/api/file/"
+                + taskId;
+
+            link.download =
+                data.filename || "";
+
+
+            document.body.appendChild(
+                link
+            );
+
+            link.click();
+
+            link.remove();
+
+
+            return;
+
+        } else if (
+            data.status ===
+            "error"
+        ) {
+
+            throw new Error(
+                data.error ||
+                "Загрузка завершилась ошибкой"
+            );
+
+        }
+
+
+        await new Promise(
+            resolve =>
+                setTimeout(
+                    resolve,
+                    1000
+                )
+        );
+
+    }
+}
+
+
+downloadButton.addEventListener(
+    "click",
+    startDownload
+);
+
+</script>
+
 </body>
 </html>
