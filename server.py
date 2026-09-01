@@ -36,10 +36,8 @@ URL_RE = re.compile(r"^https?://", re.IGNORECASE)
 YT_ARGS = [
     "--js-runtimes",
     "node",
-
     "--extractor-args",
-    "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-
+    "youtube:player-client=mweb",
     "--no-playlist",
 ]
 
