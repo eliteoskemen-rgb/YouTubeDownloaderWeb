@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 BASE=Path(__file__).resolve().parent
 DOWNLOADS=BASE/"downloads"
-COOKIES=BASE/"www.youtube.com_cookies.txt"
+COOKIES=Path("/etc/secrets/www.youtube.com_cookies.txt")
 YT_ARGS=["--cookies",str(COOKIES),"--js-runtimes","deno"]
 DOWNLOADS.mkdir(exist_ok=True)
 app=FastAPI(title="YouTube Downloader Online")
