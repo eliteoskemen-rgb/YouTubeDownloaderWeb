@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -13,21 +14,27 @@ from pydantic import BaseModel
 
 
 BASE = Path(__file__).resolve().parent
+
 DOWNLOADS = BASE / "downloads"
 
-# Render Secret File.
-# Если cookies-файла нет — приложение всё равно сможет работать без него.
-COOKIES = Path("/etc/secrets/www.youtube.com_cookies.txt")
+# Render Secret File — только для чтения
+COOKIES_SOURCE = Path("/etc/secrets/www.youtube.com_cookies.txt")
 
-DOWNLOADS.mkdir(exist_ok=True)
+# Временная папка, куда можно писать
+TEMP_DIR = Path(tempfile.gettempdir()) / "youtube_downloader"
+TEMP_DIR.mkdir(parents=True, exist_ok=True)
+
+DOWNLOADS.mkdir(parents=True, exist_ok=True)
+
 
 app = FastAPI(title="YouTube Downloader Online")
 
 app.mount(
     "/static",
     StaticFiles(directory=BASE / "static"),
-    name="static",
+    name="static"
 )
+
 
 tasks = {}
 
@@ -43,27 +50,9 @@ class Download(Link):
     mode: str = "video"
 
 
-def get_yt_args():
-    """
-    Общие параметры yt-dlp.
-    Cookies используем только если файл реально существует
-    и не пустой.
-    """
-
-    args = [
-        "--js-runtimes",
-        "deno",
-        "--remote-components",
-        "ejs:github",
-    ]
-
-    if COOKIES.exists() and COOKIES.stat().st_size > 0:
-        args.extend([
-            "--cookies",
-            str(COOKIES),
-        ])
-
-    return args
+@app.get("/")
+def index():
+    return FileResponse(BASE / "index.html")
 
 
 def safe_task():
@@ -82,39 +71,71 @@ def safe_task():
     return tid
 
 
-@app.get("/")
-def index():
-    return FileResponse(BASE / "index.html")
+def prepare_cookies(tid: str):
+    """
+    Render Secret File находится в /etc/secrets и доступен только для чтения.
+    yt-dlp иногда пытается обновить cookies.
+
+    Поэтому делаем копию в /tmp, где файл доступен для записи.
+    """
+
+    if not COOKIES_SOURCE.exists():
+        return None
+
+    cookie_file = TEMP_DIR / f"cookies_{tid}.txt"
+
+    try:
+        shutil.copy2(COOKIES_SOURCE, cookie_file)
+        return cookie_file
+    except Exception as e:
+        raise RuntimeError(
+            f"Не удалось подготовить cookies: {e}"
+        )
 
 
-@app.get("/api/health")
-def health():
-    return {
-        "status": "ok",
-        "yt_dlp": shutil.which("yt-dlp") or "",
-        "ffmpeg": shutil.which("ffmpeg") or "",
-        "deno": shutil.which("deno") or "",
-        "cookies": COOKIES.exists() and COOKIES.stat().st_size > 0,
-    }
+def yt_args(tid: str):
+    """
+    Возвращает аргументы yt-dlp.
+    """
+
+    args = [
+        "--js-runtimes",
+        "deno",
+    ]
+
+    cookie_file = prepare_cookies(tid)
+
+    if cookie_file:
+        args.extend([
+            "--cookies",
+            str(cookie_file),
+        ])
+
+    return args
 
 
 @app.post("/api/info")
 async def info(x: Link):
+
     url = x.url.strip()
 
     if not URL_RE.match(url):
         raise HTTPException(400, "Неверная ссылка")
 
-    cmd = [
-        "yt-dlp",
-        *get_yt_args(),
-        "--dump-single-json",
-        "--skip-download",
-        "--no-playlist",
-        url,
-    ]
+    temp_id = uuid.uuid4().hex
 
     try:
+        args = yt_args(temp_id)
+
+        cmd = [
+            "yt-dlp",
+            *args,
+            "--dump-single-json",
+            "--skip-download",
+            "--no-playlist",
+            url,
+        ]
+
         p = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -123,50 +144,53 @@ async def info(x: Link):
 
         out, err = await p.communicate()
 
-    except Exception as e:
-        raise HTTPException(
-            500,
-            f"Не удалось запустить yt-dlp: {e}",
-        )
+        if p.returncode != 0:
+            error = err.decode(
+                "utf-8",
+                "replace"
+            )
 
-    if p.returncode != 0:
-        error = err.decode("utf-8", "replace").strip()
+            raise HTTPException(
+                400,
+                error[-2000:]
+            )
 
-        raise HTTPException(
-            400,
-            error[-3000:] or "yt-dlp не смог получить информацию о видео",
-        )
+        try:
+            data = json.loads(out)
+        except Exception:
+            raise HTTPException(
+                500,
+                "Не удалось получить информацию о видео"
+            )
 
-    try:
-        data = json.loads(out)
-    except Exception:
-        raise HTTPException(
-            500,
-            "yt-dlp вернул некорректный JSON",
-        )
+        return {
+            "title": data.get("title", "Видео"),
+            "uploader": (
+                data.get("uploader")
+                or data.get("channel")
+                or ""
+            ),
+            "duration": data.get("duration"),
+            "height": data.get("height"),
+            "thumbnail": data.get("thumbnail", ""),
+        }
 
-    return {
-        "title": data.get("title", "Видео"),
-        "uploader": (
-            data.get("uploader")
-            or data.get("channel")
-            or ""
-        ),
-        "duration": data.get("duration"),
-        "height": data.get("height"),
-        "thumbnail": data.get("thumbnail", ""),
-    }
+    finally:
+        cookie_file = TEMP_DIR / f"cookies_{temp_id}.txt"
+
+        try:
+            cookie_file.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 @app.post("/api/download")
 async def download(x: Download):
+
     url = x.url.strip()
 
     if not URL_RE.match(url):
         raise HTTPException(400, "Неверная ссылка")
-
-    if x.mode not in ("video", "audio"):
-        raise HTTPException(400, "Неверный тип загрузки")
 
     tid = safe_task()
 
@@ -180,16 +204,36 @@ async def download(x: Download):
 
 
 async def run_download(tid, x):
+
     t = tasks[tid]
 
     work = DOWNLOADS / tid
     work.mkdir(parents=True, exist_ok=True)
 
+    cookie_file = None
+
     try:
 
-        # -----------------------------------------
-        # AUDIO / MP3
-        # -----------------------------------------
+        # -------------------------------------------------
+        # COOKIES
+        # -------------------------------------------------
+
+        cookie_file = prepare_cookies(tid)
+
+        yt_args_list = [
+            "--js-runtimes",
+            "deno",
+        ]
+
+        if cookie_file:
+            yt_args_list.extend([
+                "--cookies",
+                str(cookie_file),
+            ])
+
+        # -------------------------------------------------
+        # FORMAT
+        # -------------------------------------------------
 
         if x.mode == "audio":
 
@@ -202,10 +246,6 @@ async def run_download(tid, x):
                 "--audio-quality",
                 "192K",
             ]
-
-        # -----------------------------------------
-        # VIDEO / MP4
-        # -----------------------------------------
 
         else:
 
@@ -221,27 +261,28 @@ async def run_download(tid, x):
             else:
 
                 try:
-                    height = int(x.quality)
+                    h = int(x.quality)
                 except ValueError:
-                    height = 720
+                    h = 720
 
                 fmt = [
                     "-f",
                     (
-                        f"bestvideo[height<={height}]"
-                        f"+bestaudio/"
-                        f"best[height<={height}]"
+                        f"bestvideo[height<={h}]"
+                        f"+bestaudio/best"
+                        f"[height<={h}]"
+                        f"/best[height<={h}]"
                         f"/best"
                     ),
                     "--merge-output-format",
                     "mp4",
                 ]
 
-        # -----------------------------------------
+        # -------------------------------------------------
         # OUTPUT
-        # -----------------------------------------
+        # -------------------------------------------------
 
-        output = str(
+        out = str(
             work / "%(title)s.%(ext)s"
         )
 
@@ -249,8 +290,7 @@ async def run_download(tid, x):
 
         cmd = [
             "yt-dlp",
-
-            *get_yt_args(),
+            *yt_args_list,
 
             "--newline",
             "--progress",
@@ -258,8 +298,12 @@ async def run_download(tid, x):
 
             "--no-warnings",
 
-            "--output",
-            output,
+            *fmt,
+
+            "-o",
+            out,
+
+            x.url,
         ]
 
         if ffmpeg:
@@ -268,13 +312,9 @@ async def run_download(tid, x):
                 ffmpeg,
             ])
 
-        cmd.extend(fmt)
-
-        cmd.append(x.url.strip())
-
-        # -----------------------------------------
-        # START PROCESS
-        # -----------------------------------------
+        # -------------------------------------------------
+        # START YT-DLP
+        # -------------------------------------------------
 
         t["status"] = "downloading"
 
@@ -293,122 +333,120 @@ async def run_download(tid, x):
 
             s = line.decode(
                 "utf-8",
-                "replace",
+                "replace"
             ).strip()
 
-            if not s:
-                continue
-
-            # -------------------------------------
+            # -------------------------------------------------
             # PROGRESS
-            # -------------------------------------
+            # -------------------------------------------------
 
-            progress = re.search(
-                r"\[download\]\s+([\d.]+)%",
-                s,
+            m = re.search(
+                r"\[download\]\s+"
+                r"([\d.]+)%"
+                r".*?"
+                r"at\s+(.+?)"
+                r"\s+ETA\s+(.+)",
+                s
             )
 
-            if progress:
+            if m:
+
                 try:
                     t["percent"] = float(
-                        progress.group(1)
+                        m.group(1)
                     )
                 except Exception:
                     pass
 
-            # Speed
-            speed = re.search(
-                r"at\s+(.+?)\s+ETA",
-                s,
-            )
+                t["speed"] = m.group(2)
+                t["eta"] = m.group(3)
 
-            if speed:
-                t["speed"] = speed.group(1)
+            # -------------------------------------------------
+            # FILENAME
+            # -------------------------------------------------
 
-            # ETA
-            eta = re.search(
-                r"ETA\s+(.+)",
-                s,
-            )
+            if "[download]" in s and "%" in s:
+                t["filename"] = (
+                    s.split("]")[-1].strip()
+                )
 
-            if eta:
-                t["eta"] = eta.group(1)
+            # -------------------------------------------------
+            # PROCESSING
+            # -------------------------------------------------
 
-            # Destination
-            if "Destination:" in s:
-
-                filename = s.split(
-                    "Destination:",
-                    1,
-                )[1].strip()
-
-                t["filename"] = Path(
-                    filename
-                ).name
-
-            # Merger
-            if "[Merger]" in s:
-
-                t["status"] = "processing"
-
-            # Postprocessing
-            if "Deleting original file" in s:
-
+            if (
+                "[Merger]" in s
+                or "Destination:" in s
+                or "[ExtractAudio]" in s
+            ):
                 t["status"] = "processing"
 
         rc = await p.wait()
 
-        # -----------------------------------------
+        # -------------------------------------------------
         # ERROR
-        # -----------------------------------------
+        # -------------------------------------------------
 
         if rc != 0:
 
             raise RuntimeError(
-                "yt-dlp завершился с ошибкой. "
-                "Проверьте подробности в логах Render."
+                "yt-dlp не смог скачать файл. "
+                "Проверь cookies YouTube и ссылку."
             )
 
-        # -----------------------------------------
-        # FIND RESULT FILE
-        # -----------------------------------------
+        # -------------------------------------------------
+        # FIND FILE
+        # -------------------------------------------------
 
         candidates = [
             p
-            for p in work.rglob("*")
+            for p in work.iterdir()
             if p.is_file()
         ]
 
         if not candidates:
 
             raise RuntimeError(
-                "Файл не найден после загрузки."
+                "Файл не найден после загрузки"
             )
 
-        # Берём самый свежий файл
-        result = max(
+        f = max(
             candidates,
-            key=lambda p: p.stat().st_mtime,
+            key=lambda p: p.stat().st_mtime
         )
 
-        # -----------------------------------------
-        # SUCCESS
-        # -----------------------------------------
+        # -------------------------------------------------
+        # DONE
+        # -------------------------------------------------
 
-        t.update({
-            "status": "done",
-            "percent": 100,
-            "filename": result.name,
-            "file": str(result),
-            "error": "",
-        })
+        t.update(
+            status="done",
+            percent=100,
+            filename=f.name,
+            file=str(f),
+        )
 
     except Exception as e:
 
-        t.update({
-            "status": "error",
-            "error": str(e),
-        })
+        t.update(
+            status="error",
+            error=str(e),
+        )
+
+    finally:
+
+        # -------------------------------------------------
+        # DELETE TEMP COOKIES
+        # -------------------------------------------------
+
+        if cookie_file:
+
+            try:
+                cookie_file.unlink(
+                    missing_ok=True
+                )
+            except Exception:
+                pass
 
 
 @app.get("/api/progress/{tid}")
@@ -417,7 +455,7 @@ def progress(tid: str):
     if tid not in tasks:
         raise HTTPException(
             404,
-            "Задача не найдена",
+            "Задача не найдена"
         )
 
     return tasks[tid]
@@ -426,32 +464,24 @@ def progress(tid: str):
 @app.get("/api/file/{tid}")
 def file(tid: str):
 
-    task = tasks.get(tid)
+    t = tasks.get(tid)
 
-    if not task:
+    if (
+        not t
+        or t["status"] != "done"
+        or not t["file"]
+    ):
         raise HTTPException(
             404,
-            "Задача не найдена",
+            "Файл ещё не готов"
         )
 
-    if task["status"] != "done":
-        raise HTTPException(
-            404,
-            "Файл ещё не готов",
-        )
-
-    if not task["file"]:
-        raise HTTPException(
-            404,
-            "Файл не найден",
-        )
-
-    f = Path(task["file"])
+    f = Path(t["file"])
 
     if not f.exists():
         raise HTTPException(
             404,
-            "Файл удалён",
+            "Файл удалён"
         )
 
     return FileResponse(
