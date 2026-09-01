@@ -3,37 +3,26 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-
 
 BASE = Path(__file__).resolve().parent
 DOWNLOADS = BASE / "downloads"
-
 DOWNLOADS.mkdir(parents=True, exist_ok=True)
 
+YTDLP = os.getenv("YTDLP_BIN", "yt-dlp")
+BGUTIL_SCRIPT = os.getenv(
+    "BGUTIL_SCRIPT",
+    "/opt/bgutil/server/build/generate_once.js",
+)
+
 app = FastAPI(title="YouTube Downloader")
-
 tasks = {}
-
-# bgutil server is started by Docker/entrypoint on localhost:4416
-YT_ARGS = [
-    "--no-playlist",
-    "--js-runtimes",
-    "deno",
-    "--extractor-args",
-    "youtube:player-client=mweb",
-    "--extractor-args",
-    "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-]
-
-URL_RE = re.compile(r"^https?://", re.I)
 
 
 class Link(BaseModel):
@@ -45,321 +34,368 @@ class Download(Link):
     mode: str = "video"
 
 
+def normalize_url(url: str) -> str:
+    value = url.strip()
+    p = urlparse(value)
+    host = (p.hostname or "").lower()
+
+    if host == "youtu.be":
+        vid = p.path.strip("/").split("/")[0]
+        if vid:
+            return f"https://www.youtube.com/watch?v={vid}"
+
+    if host == "youtube.com" or host.endswith(".youtube.com"):
+        q = parse_qs(p.query)
+        if q.get("v"):
+            return f"https://www.youtube.com/watch?v={q['v'][0]}"
+
+        parts = [part for part in p.path.split("/") if part]
+        if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live"}:
+            return f"https://www.youtube.com/{parts[0]}/{parts[1]}"
+
+    raise ValueError("Нужна корректная ссылка YouTube.")
+
+
+def video_id(url: str):
+    p = urlparse(url)
+    host = (p.hostname or "").lower()
+
+    if host == "youtu.be":
+        return p.path.strip("/").split("/")[0]
+
+    q = parse_qs(p.query)
+    if q.get("v"):
+        return q["v"][0]
+
+    parts = [part for part in p.path.split("/") if part]
+    if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live"}:
+        return parts[1]
+
+    return ""
+
+
+def base_args():
+    return [
+        YTDLP,
+        "--ignore-config",
+        "--no-warnings",
+        "--no-playlist",
+        "--js-runtimes",
+        "deno",
+        "--extractor-args",
+        f"youtube:player-client=mweb",
+        "--extractor-args",
+        f"youtubepot-bgutilscript:script_path={BGUTIL_SCRIPT}",
+    ]
+
+
+async def run_cmd(args, timeout=180):
+    proc = await asyncio.create_subprocess_exec(
+        *(base_args() + args),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+    try:
+        output, _ = await asyncio.wait_for(
+            proc.communicate(), timeout=timeout
+        )
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise RuntimeError("yt-dlp превысил время ожидания.")
+
+    return proc.returncode, output.decode("utf-8", "replace")
+
+
+def unique_formats(data):
+    result = {}
+
+    for fmt in data.get("formats") or []:
+        height = fmt.get("height")
+        if not height or height < 144:
+            continue
+
+        ext = fmt.get("ext") or ""
+        has_video = fmt.get("vcodec") not in (None, "none")
+        has_audio = fmt.get("acodec") not in (None, "none")
+
+        # Prefer video+audio first, then video-only.
+        score = (
+            100000 if has_audio else 0
+        ) + height * 100 + (
+            1 if ext == "mp4" else 0
+        )
+
+        item = result.get(height)
+        if item is None or score > item["_score"]:
+            size = fmt.get("filesize") or fmt.get("filesize_approx")
+            result[height] = {
+                "quality": f"{height}p",
+                "height": height,
+                "ext": ext,
+                "filesize": size,
+                "_score": score,
+            }
+
+    output = []
+    for height, item in sorted(result.items(), reverse=True):
+        item.pop("_score", None)
+        if item["filesize"]:
+            mb = item["filesize"] / 1024 / 1024
+            item["file_size_str"] = f"{mb:.1f} MB"
+        else:
+            item["file_size_str"] = ""
+        output.append(item)
+
+    return output
+
+
 @app.get("/")
-def index():
+async def root():
     return FileResponse(BASE / "index.html")
 
 
 @app.get("/health")
-def health():
+async def health():
     return {
         "status": "ok",
-        "service": "youtube-downloader",
-        "engine": "yt-dlp + bgutil",
+        "engine": "yt-dlp + bgutil script provider",
+        "yt_dlp": shutil.which(YTDLP) or YTDLP,
+        "bgutil_script": BGUTIL_SCRIPT,
+        "bgutil_script_exists": Path(BGUTIL_SCRIPT).exists(),
+        "ffmpeg": bool(shutil.which("ffmpeg")),
+        "deno": bool(shutil.which("deno")),
     }
 
 
-def make_task():
-    tid = uuid.uuid4().hex
+@app.post("/api/info")
+async def info(request: Link):
+    try:
+        url = normalize_url(request.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
 
-    tasks[tid] = {
-        "status": "starting",
+    rc, text = await run_cmd(
+        [
+            "--dump-single-json",
+            "--skip-download",
+            url,
+        ],
+        timeout=120,
+    )
+
+    if rc != 0:
+        raise HTTPException(
+            502,
+            text[-8000:] or "yt-dlp не получил информацию.",
+        )
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            502,
+            "yt-dlp вернул некорректный JSON.",
+        )
+
+    vid = video_id(url)
+
+    return {
+        "success": True,
+        "id": vid,
+        "title": data.get("title") or "YouTube video",
+        "thumbnail": data.get("thumbnail")
+        or f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg",
+        "duration": data.get("duration"),
+        "uploader": data.get("uploader")
+        or data.get("channel")
+        or "",
+        "formats": unique_formats(data),
+        "audioFormat": "mp3",
+    }
+
+
+@app.post("/api/download")
+async def download(request: Download):
+    try:
+        url = normalize_url(request.url)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    task_id = uuid.uuid4().hex
+    tasks[task_id] = {
+        "status": "queued",
         "percent": 0,
         "speed": "",
         "eta": "",
         "filename": "",
         "error": "",
         "file": "",
+        "log": "",
     }
-
-    return tid
-
-
-async def run_info(url: str):
-    cmd = [
-        "yt-dlp",
-        *YT_ARGS,
-        "--dump-single-json",
-        "--skip-download",
-        url,
-    ]
-
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    out, err = await process.communicate()
-
-    if process.returncode != 0:
-        raise RuntimeError(
-            err.decode("utf-8", "replace")[-6000:]
-        )
-
-    return json.loads(out)
-
-
-@app.post("/api/info")
-async def info(x: Link):
-
-    url = x.url.strip()
-
-    if not URL_RE.match(url):
-        raise HTTPException(400, "Неверная ссылка")
-
-    try:
-        data = await run_info(url)
-
-    except Exception as e:
-        raise HTTPException(
-            502,
-            str(e),
-        )
-
-    return {
-        "title": data.get("title", "Видео"),
-        "uploader": (
-            data.get("uploader")
-            or data.get("channel")
-            or ""
-        ),
-        "duration": data.get("duration"),
-        "height": data.get("height"),
-        "thumbnail": data.get("thumbnail", ""),
-    }
-
-
-@app.post("/api/download")
-async def download(x: Download):
-
-    url = x.url.strip()
-
-    if not URL_RE.match(url):
-        raise HTTPException(400, "Неверная ссылка")
-
-    tid = make_task()
 
     asyncio.create_task(
-        run_download(
-            tid,
-            x,
+        worker(
+            task_id,
+            url,
+            request.quality,
+            request.mode,
         )
     )
 
-    return {
-        "id": tid,
-    }
+    return {"id": task_id}
 
 
-async def run_download(tid: str, x: Download):
-
-    task = tasks[tid]
-
-    work = DOWNLOADS / tid
-    work.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+async def worker(task_id, url, quality, mode):
+    task = tasks[task_id]
+    work = DOWNLOADS / task_id
+    work.mkdir(parents=True, exist_ok=True)
 
     try:
-
-        if x.mode == "audio":
-
-            fmt = [
-                "-f",
-                "bestaudio/best",
+        if mode == "audio":
+            output = work / "%(title).150s.%(ext)s"
+            args = [
+                "--newline",
+                "--progress",
                 "-x",
                 "--audio-format",
                 "mp3",
                 "--audio-quality",
                 "192K",
+                "-o",
+                str(output),
+                url,
+            ]
+        else:
+            try:
+                maximum = int(str(quality).rstrip("p"))
+            except ValueError:
+                maximum = 4320
+
+            maximum = max(144, min(4320, maximum))
+
+            output = work / "%(title).150s.%(ext)s"
+            fmt = (
+                f"bestvideo[height<={maximum}]"
+                f"+bestaudio/"
+                f"best[height<={maximum}]"
+                f"/best"
+            )
+
+            args = [
+                "--newline",
+                "--progress",
+                "-f",
+                fmt,
+                "--merge-output-format",
+                "mp4",
+                "-o",
+                str(output),
+                url,
             ]
 
-        else:
+        task["status"] = "downloading"
 
-            if x.quality == "best":
-
-                fmt = [
-                    "-f",
-                    "bestvideo+bestaudio/best",
-                    "--merge-output-format",
-                    "mp4",
-                ]
-
-            else:
-
-                try:
-                    height = int(x.quality)
-
-                except ValueError:
-                    height = 1080
-
-                fmt = [
-                    "-f",
-                    (
-                        f"bestvideo[height<={height}]"
-                        f"+bestaudio/"
-                        f"best[height<={height}]/"
-                        f"best"
-                    ),
-                    "--merge-output-format",
-                    "mp4",
-                ]
-
-        output = str(
-            work / "%(title).150s.%(ext)s"
-        )
-
-        cmd = [
-            "yt-dlp",
-            *YT_ARGS,
-            "--newline",
-            "--progress",
-            "--ffmpeg-location",
-            shutil.which("ffmpeg") or "",
-            *fmt,
-            "-o",
-            output,
-            url,
-        ]
-
-        cmd = [
-            c for c in cmd
-            if c != ""
-        ]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
+        proc = await asyncio.create_subprocess_exec(
+            *(base_args() + args),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
 
         while True:
-
-            line = await process.stdout.readline()
-
+            line = await proc.stdout.readline()
             if not line:
                 break
 
-            text = line.decode(
-                "utf-8",
-                "replace",
-            ).strip()
-
-            task["filename"] = text
+            text = line.decode("utf-8", "replace").strip()
+            task["log"] = text[-1500:]
 
             match = re.search(
-                r"\[download\]\s+([\d.]+)%.*?"
-                r"at\s+(.+?)\s+ETA\s+(.+)",
+                r"\[download\]\s+([\d.]+)%",
                 text,
             )
-
             if match:
+                task["percent"] = float(match.group(1))
 
-                task["percent"] = float(
-                    match.group(1)
-                )
+            speed = re.search(r"\bat\s+(.+?)\s+ETA\s+", text)
+            eta = re.search(r"\bETA\s+(.+)$", text)
 
-                task["speed"] = match.group(2)
-                task["eta"] = match.group(3)
-                task["status"] = "downloading"
+            if speed:
+                task["speed"] = speed.group(1)
+            if eta:
+                task["eta"] = eta.group(1)
 
-            if (
-                "Merging formats" in text
-                or "[Merger]" in text
-                or "Destination:" in text
-            ):
+            if "Destination:" in text:
+                task["status"] = "processing"
+            elif "Merging formats" in text:
                 task["status"] = "processing"
 
-            if (
-                "ERROR:" in text
-                or "error:" in text
-            ):
-                task["error"] = text[-3000:]
-
-        rc = await process.wait()
+        rc = await proc.wait()
 
         if rc != 0:
-
             raise RuntimeError(
-                task["error"]
-                or "yt-dlp не смог скачать файл"
+                task["log"] or "yt-dlp завершился с ошибкой."
             )
 
-        candidates = [
-            p
-            for p in work.iterdir()
+        files = [
+            p for p in work.iterdir()
             if p.is_file()
         ]
 
-        if not candidates:
+        if not files:
+            raise RuntimeError("Файл после загрузки не найден.")
 
-            raise RuntimeError(
-                "После загрузки файл не найден"
-            )
-
-        file_path = max(
-            candidates,
-            key=lambda p: p.stat().st_mtime
+        result = max(
+            files,
+            key=lambda p: p.stat().st_mtime,
         )
 
-        task.update(
-            {
-                "status": "done",
-                "percent": 100,
-                "filename": file_path.name,
-                "file": str(file_path),
-            }
-        )
+        task.update({
+            "status": "done",
+            "percent": 100,
+            "filename": result.name,
+            "file": str(result),
+        })
 
-    except Exception as e:
-
-        task.update(
-            {
-                "status": "error",
-                "error": str(e),
-            }
-        )
+    except Exception as exc:
+        task.update({
+            "status": "error",
+            "error": str(exc),
+        })
 
 
-@app.get("/api/progress/{tid}")
-def progress(tid: str):
+@app.get("/api/progress/{task_id}")
+async def progress(task_id: str):
+    task = tasks.get(task_id)
+    if not task:
+        raise HTTPException(404, "Задача не найдена.")
 
-    if tid not in tasks:
-        raise HTTPException(
-            404,
-            "Задача не найдена"
-        )
+    response = {"success": True, **task}
 
-    return tasks[tid]
+    if task["status"] == "done":
+        response["download_url"] = f"/api/file/{task_id}"
+
+    return response
 
 
-@app.get("/api/file/{tid}")
-def file(tid: str):
+@app.get("/api/file/{task_id}")
+async def get_file(task_id: str):
+    task = tasks.get(task_id)
 
-    task = tasks.get(tid)
+    if not task:
+        raise HTTPException(404, "Задача не найдена.")
 
-    if (
-        not task
-        or task["status"] != "done"
-        or not task["file"]
-    ):
-        raise HTTPException(
-            404,
-            "Файл ещё не готов"
-        )
+    if task["status"] != "done":
+        raise HTTPException(400, "Файл ещё не готов.")
 
-    f = Path(task["file"])
+    path = Path(task["file"])
 
-    if not f.exists():
-        raise HTTPException(
-            404,
-            "Файл удалён"
-        )
+    if not path.exists():
+        raise HTTPException(404, "Файл больше не существует.")
 
     return FileResponse(
-        f,
-        filename=f.name,
+        path,
+        filename=task["filename"],
         media_type="application/octet-stream",
     )
