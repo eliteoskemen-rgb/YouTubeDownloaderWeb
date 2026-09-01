@@ -1,9 +1,6 @@
 #!/bin/sh
-
 set -e
 
-PORT="${PORT:-10000}"
-
-echo "Starting YouTube Downloader on port ${PORT}"
+echo "Starting YouTube Downloader on port ${PORT:-10000}"
 
 exec python server.py
