@@ -1,7 +1,8 @@
 import os
 import re
+import uuid
 from pathlib import Path
-from urllib.parse import urlparse, quote
+from urllib.parse import quote, urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -13,6 +14,7 @@ SOCLIP_URL = "https://api.soclip.dev/v1/media"
 SOCLIP_KEY = os.getenv("SOCLIP_API_KEY", "").strip()
 
 app = FastAPI(title="YouTube Downloader")
+download_links = {}
 
 
 class UrlRequest(BaseModel):
@@ -28,14 +30,18 @@ class DownloadRequest(BaseModel):
 def validate_youtube(url: str) -> str:
     url = url.strip()
     host = (urlparse(url).hostname or "").lower()
+
     if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com"):
         return url
+
     raise ValueError("Нужна корректная ссылка YouTube.")
 
 
 async def soclip_request(url: str):
     if not SOCLIP_KEY:
-        raise RuntimeError("SOCLIP_API_KEY не задан в Render Environment.")
+        raise RuntimeError(
+            "SOCLIP_API_KEY не задан в Render → Environment."
+        )
 
     headers = {
         "Authorization": f"Bearer {SOCLIP_KEY}",
@@ -56,14 +62,12 @@ async def soclip_request(url: str):
     except httpx.HTTPError as exc:
         raise RuntimeError(f"Soclip недоступен: {exc}")
 
-    raw = response.text
-
     try:
         data = response.json()
     except ValueError:
-        # Keep the original upstream response visible as a normal JSON error.
         raise RuntimeError(
-            f"Soclip вернул не JSON (HTTP {response.status_code}): {raw[:2000]}"
+            f"Soclip вернул не JSON (HTTP {response.status_code}): "
+            f"{response.text[:2000]}"
         )
 
     if response.status_code >= 400:
@@ -77,7 +81,11 @@ async def soclip_request(url: str):
 
     if data.get("success") is False:
         raise RuntimeError(
-            str(data.get("error") or data.get("message") or "Soclip extraction failed")
+            str(
+                data.get("error")
+                or data.get("message")
+                or "Soclip extraction failed"
+            )
         )
 
     return data
@@ -85,15 +93,25 @@ async def soclip_request(url: str):
 
 def payload_of(data: dict) -> dict:
     payload = data.get("data")
-    if isinstance(payload, dict):
-        return payload
-    return data
+    return payload if isinstance(payload, dict) else data
 
 
 def media_list(data: dict):
-    payload = payload_of(data)
-    medias = payload.get("medias", [])
+    medias = payload_of(data).get("medias", [])
     return medias if isinstance(medias, list) else []
+
+
+def safe_filename(title: str, ext: str) -> str:
+    name = re.sub(
+        r'[\\/:*?"<>|\r\n]+',
+        "_",
+        title or "youtube-video",
+    ).strip(" .")
+
+    if not name:
+        name = "youtube-video"
+
+    return f"{name[:140]}.{ext}"
 
 
 def normalize_formats(data: dict):
@@ -121,35 +139,51 @@ def normalize_formats(data: dict):
         key = (height, ext)
         if key in seen:
             continue
+
         seen.add(key)
 
-        result.append({
-            "quality": f"{height}p",
-            "height": height,
-            "width": media.get("width"),
-            "ext": ext,
-            "url": url,
-            "label": media.get("label") or f"{ext} ({height}p)",
-            "file_size": media.get("filesize") or media.get("file_size"),
-            "file_size_str": media.get("file_size_str") or "",
-        })
+        size = media.get("filesize") or media.get("file_size")
+        size_str = media.get("file_size_str") or ""
+
+        if not size_str and size:
+            try:
+                size_str = f"{size / 1024 / 1024:.1f} MB"
+            except Exception:
+                pass
+
+        result.append(
+            {
+                "quality": f"{height}p",
+                "height": height,
+                "width": media.get("width"),
+                "ext": ext,
+                "url": url,
+                "label": media.get("label") or f"{ext} ({height}p)",
+                "file_size_str": size_str,
+            }
+        )
 
     result.sort(key=lambda x: x["height"], reverse=True)
     return result
 
 
 def audio_media(data: dict):
-    out = []
+    result = []
+
     for media in media_list(data):
-        if not isinstance(media, dict) or not media.get("url"):
+        if not isinstance(media, dict):
             continue
+
+        url = media.get("url")
         ext = str(media.get("ext") or "").lower()
-        if ext in {"mp3", "m4a", "opus", "webm"} and (
-            "audio" in str(media.get("label") or "").lower()
-            or ext in {"mp3", "m4a", "opus"}
-        ):
-            out.append(media)
-    return out
+
+        if not url:
+            continue
+
+        if ext in {"mp3", "m4a", "opus"}:
+            result.append(media)
+
+    return result
 
 
 @app.get("/")
@@ -173,17 +207,14 @@ async def info(req: UrlRequest):
         data = await soclip_request(url)
         payload = payload_of(data)
 
-        formats = normalize_formats(data)
-        audios = audio_media(data)
-
         return {
             "success": True,
             "title": payload.get("title") or "YouTube video",
             "thumbnail": payload.get("thumbnail") or "",
             "duration": payload.get("duration"),
             "uploader": payload.get("author") or "",
-            "formats": formats,
-            "audio": audios,
+            "formats": normalize_formats(data),
+            "audio": audio_media(data),
             "credits_used": data.get("credits_used"),
             "credits_remaining": data.get("credits_remaining"),
         }
@@ -193,8 +224,6 @@ async def info(req: UrlRequest):
     except HTTPException:
         raise
     except Exception as exc:
-        # Always return proper JSON so the frontend never gets
-        # "Unexpected token 'I'".
         raise HTTPException(502, str(exc))
 
 
@@ -213,80 +242,87 @@ async def download(req: DownloadRequest):
 
             chosen = candidates[0]
             ext = str(chosen.get("ext") or "mp3").lower()
+            filename = safe_filename(
+                payload.get("title") or "youtube-audio",
+                ext,
+            )
 
-            safe_title = re.sub(r'[\/:*?"<>|\r\n]+', "_", payload.get("title") or "youtube-audio").strip()[:140] or "youtube-audio"
-            filename = f"{safe_title}.{ext}"
-            token = uuid.uuid4().hex
-            download_links[token] = {
-                "url": chosen["url"],
-                "filename": filename,
-                "content_type": "audio/mpeg" if ext == "mp3" else "application/octet-stream",
-            }
-            return {
-                "success": True,
-                "download_url": f"/api/file/{token}",
-                "filename": filename,
-                "quality": chosen.get("label") or ext,
-                "credits_used": data.get("credits_used"),
-                "credits_remaining": data.get("credits_remaining"),
-            }
+        else:
+            quality = req.quality.strip().lower()
 
-        # Video
-        target_height = 0
-        quality = req.quality.strip().lower()
+            videos = []
+            for media in medias:
+                if not isinstance(media, dict):
+                    continue
+                if not media.get("url"):
+                    continue
+                ext = str(media.get("ext") or "").lower()
+                if ext not in {"mp4", "webm"}:
+                    continue
 
-        if quality != "best":
-            try:
-                target_height = int(quality.rstrip("p"))
-            except ValueError:
-                target_height = 2160
+                try:
+                    height = int(media.get("height") or 0)
+                except (TypeError, ValueError):
+                    height = 0
 
-        videos = [
-            m for m in medias
-            if isinstance(m, dict)
-            and m.get("url")
-            and str(m.get("ext") or "").lower() in {"mp4", "webm"}
-        ]
+                if height > 0:
+                    videos.append((height, media))
 
-        def h(m):
-            try:
-                return int(m.get("height") or 0)
-            except (TypeError, ValueError):
-                return 0
+            if not videos:
+                raise RuntimeError(
+                    "Soclip не вернул подходящее видео."
+                )
 
-        videos.sort(
-            key=lambda m: (
-                h(m),
-                1 if str(m.get("ext") or "").lower() == "mp4" else 0,
-            ),
-            reverse=True,
-        )
+            if quality != "best":
+                try:
+                    target = int(quality.rstrip("p"))
+                except ValueError:
+                    target = max(h for h, _ in videos)
 
-        if target_height:
-            filtered = [m for m in videos if h(m) <= target_height]
-            if filtered:
-                videos = filtered
+                filtered = [
+                    (h, m)
+                    for h, m in videos
+                    if h <= target
+                ]
+                if filtered:
+                    videos = filtered
 
-        if not videos:
-            raise RuntimeError("Soclip не вернул подходящее видео.")
+            videos.sort(
+                key=lambda item: (
+                    item[0],
+                    1 if str(item[1].get("ext") or "").lower() == "mp4" else 0,
+                ),
+                reverse=True,
+            )
 
-        chosen = videos[0]
-        ext = str(chosen.get("ext") or "mp4").lower()
+            _, chosen = videos[0]
+            ext = str(chosen.get("ext") or "mp4").lower()
+            filename = safe_filename(
+                payload.get("title") or "youtube-video",
+                ext,
+            )
 
-        safe_title = re.sub(r'[\/:*?"<>|\r\n]+', "_", payload.get("title") or "youtube-video").strip()[:140] or "youtube-video"
-        filename = f"{safe_title}.{ext}"
         token = uuid.uuid4().hex
+
         download_links[token] = {
             "url": chosen["url"],
             "filename": filename,
-            "content_type": "video/mp4" if ext == "mp4" else "video/webm",
+            "content_type": (
+                "audio/mpeg"
+                if req.media_type == "audio"
+                else (
+                    "video/mp4"
+                    if ext == "mp4"
+                    else "video/webm"
+                )
+            ),
         }
 
         return {
             "success": True,
             "download_url": f"/api/file/{token}",
             "filename": filename,
-            "quality": chosen.get("label") or f"{h(chosen)}p",
+            "quality": chosen.get("label") or ext,
             "credits_used": data.get("credits_used"),
             "credits_remaining": data.get("credits_remaining"),
         }
@@ -299,21 +335,26 @@ async def download(req: DownloadRequest):
         raise HTTPException(502, str(exc))
 
 
-
 @app.get("/api/file/{token}")
 async def download_file(token: str):
     item = download_links.get(token)
+
     if not item:
-        raise HTTPException(404, "Ссылка на файл истекла или не найдена.")
+        raise HTTPException(
+            404,
+            "Ссылка на файл истекла или не найдена.",
+        )
 
     target_url = item["url"]
     filename = item["filename"]
     content_type = item["content_type"]
 
-    # Keep the original Soclip URL server-side. The browser only sees
-    # this same-origin endpoint, so it cannot navigate to googlevideo.com.
     async def stream():
-        timeout = httpx.Timeout(900.0, connect=30.0)
+        timeout = httpx.Timeout(
+            900.0,
+            connect=30.0,
+        )
+
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
@@ -321,26 +362,46 @@ async def download_file(token: str):
             async with client.stream(
                 "GET",
                 target_url,
-                headers={"User-Agent": "Mozilla/5.0"},
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                },
             ) as response:
+
                 if response.status_code >= 400:
                     body = await response.aread()
+
                     raise RuntimeError(
-                        f"Источник Soclip вернул HTTP {response.status_code}: "
+                        "Источник видео вернул HTTP "
+                        f"{response.status_code}: "
                         f"{body[:800].decode('utf-8', 'replace')}"
                     )
 
-                async for chunk in response.aiter_bytes(1024 * 1024):
+                async for chunk in response.aiter_bytes(
+                    1024 * 1024
+                ):
                     yield chunk
 
-    safe_ascii = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('_') or "download"
+    ascii_name = re.sub(
+        r"[^A-Za-z0-9._-]+",
+        "_",
+        filename,
+    ).strip("_") or "download"
+
     disposition = (
-        f'attachment; filename="{safe_ascii}"; '
+        f'attachment; filename="{ascii_name}"; '
         f"filename*=UTF-8''{quote(filename, safe='')}"
     )
 
+    # Delete only after the stream has finished.
+    async def stream_once():
+        try:
+            async for chunk in stream():
+                yield chunk
+        finally:
+            download_links.pop(token, None)
+
     return StreamingResponse(
-        stream(),
+        stream_once(),
         media_type=content_type,
         headers={
             "Content-Disposition": disposition,
