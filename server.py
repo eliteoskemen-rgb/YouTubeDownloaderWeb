@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 BASE=Path(__file__).resolve().parent
 DOWNLOADS=BASE/"downloads"
+COOKIES=BASE/"www.youtube.com_cookies.txt"
+YT_ARGS=["--cookies",str(COOKIES),"--js-runtimes","deno"]
 DOWNLOADS.mkdir(exist_ok=True)
 app=FastAPI(title="YouTube Downloader Online")
 app.mount("/static",StaticFiles(directory=BASE/"static"),name="static")
@@ -33,7 +35,7 @@ def safe_task():
 async def info(x:Link):
     if not URL_RE.match(x.url.strip()): raise HTTPException(400,"Неверная ссылка")
     p=await asyncio.create_subprocess_exec(
-        "yt-dlp","--dump-single-json","--skip-download","--no-playlist",x.url,
+        "yt-dlp",*YT_ARGS,"--dump-single-json","--skip-download","--no-playlist",x.url,
         stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE
     )
     out,err=await p.communicate()
@@ -60,7 +62,7 @@ async def run_download(tid,x):
             else:
                 h=int(x.quality); fmt=["-f",f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best[height<={h}]/best","--merge-output-format","mp4"]
         out=str(work/"%(title)s.%(ext)s")
-        cmd=["yt-dlp","--newline","--progress","--no-playlist","--ffmpeg-location",shutil.which("ffmpeg") or "",*fmt,"-o",out,x.url]
+        cmd=["yt-dlp",*YT_ARGS,"--newline","--progress","--no-playlist","--ffmpeg-location",shutil.which("ffmpeg") or "",*fmt,"-o",out,x.url]
         cmd=[c for c in cmd if c!=""]
         p=await asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.STDOUT)
         while True:
