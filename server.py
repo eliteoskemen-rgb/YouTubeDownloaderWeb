@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -213,10 +213,18 @@ async def download(req: DownloadRequest):
             chosen = candidates[0]
             ext = str(chosen.get("ext") or "mp3").lower()
 
+            safe_title = re.sub(r'[\/:*?"<>|\r\n]+', "_", payload.get("title") or "youtube-audio").strip()[:140] or "youtube-audio"
+            filename = f"{safe_title}.{ext}"
+            token = uuid.uuid4().hex
+            download_links[token] = {
+                "url": chosen["url"],
+                "filename": filename,
+                "content_type": "audio/mpeg" if ext == "mp3" else "application/octet-stream",
+            }
             return {
                 "success": True,
-                "download_url": chosen["url"],
-                "filename": f"{payload.get('title') or 'youtube-audio'}.{ext}",
+                "download_url": f"/api/file/{token}",
+                "filename": filename,
                 "quality": chosen.get("label") or ext,
                 "credits_used": data.get("credits_used"),
                 "credits_remaining": data.get("credits_remaining"),
@@ -264,10 +272,19 @@ async def download(req: DownloadRequest):
         chosen = videos[0]
         ext = str(chosen.get("ext") or "mp4").lower()
 
+        safe_title = re.sub(r'[\/:*?"<>|\r\n]+', "_", payload.get("title") or "youtube-video").strip()[:140] or "youtube-video"
+        filename = f"{safe_title}.{ext}"
+        token = uuid.uuid4().hex
+        download_links[token] = {
+            "url": chosen["url"],
+            "filename": filename,
+            "content_type": "video/mp4" if ext == "mp4" else "video/webm",
+        }
+
         return {
             "success": True,
-            "download_url": chosen["url"],
-            "filename": f"{payload.get('title') or 'youtube-video'}.{ext}",
+            "download_url": f"/api/file/{token}",
+            "filename": filename,
             "quality": chosen.get("label") or f"{h(chosen)}p",
             "credits_used": data.get("credits_used"),
             "credits_remaining": data.get("credits_remaining"),
@@ -281,10 +298,10 @@ async def download(req: DownloadRequest):
         raise HTTPException(502, str(exc))
 
 
+
 @app.get("/api/file/{token}")
 async def download_file(token: str):
     item = download_links.get(token)
-
     if not item:
         raise HTTPException(404, "Ссылка на файл истекла или не найдена.")
 
@@ -292,35 +309,42 @@ async def download_file(token: str):
     filename = item["filename"]
     content_type = item["content_type"]
 
+    # Keep the original Soclip URL server-side. The browser only sees
+    # this same-origin endpoint, so it cannot navigate to googlevideo.com.
     async def stream():
-        timeout = httpx.Timeout(600.0, connect=30.0)
+        timeout = httpx.Timeout(900.0, connect=30.0)
         async with httpx.AsyncClient(
             timeout=timeout,
             follow_redirects=True,
         ) as client:
-            try:
-                async with client.stream("GET", target_url) as response:
-                    if response.status_code >= 400:
-                        body = await response.aread()
-                        raise RuntimeError(
-                            f"Источник Soclip вернул HTTP {response.status_code}: "
-                            f"{body[:500].decode('utf-8', 'replace')}"
-                        )
+            async with client.stream(
+                "GET",
+                target_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+            ) as response:
+                if response.status_code >= 400:
+                    body = await response.aread()
+                    raise RuntimeError(
+                        f"Источник Soclip вернул HTTP {response.status_code}: "
+                        f"{body[:800].decode('utf-8', 'replace')}"
+                    )
 
-                    async for chunk in response.aiter_bytes(1024 * 1024):
-                        yield chunk
-            finally:
-                # One-time link: remove after transfer finishes.
-                download_links.pop(token, None)
+                async for chunk in response.aiter_bytes(1024 * 1024):
+                    yield chunk
 
-    headers = {
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "Cache-Control": "no-store",
-        "X-Content-Type-Options": "nosniff",
-    }
+    safe_ascii = re.sub(r'[^A-Za-z0-9._-]+', '_', filename).strip('_') or "download"
+    disposition = (
+        f'attachment; filename="{safe_ascii}"; '
+        f"filename*=UTF-8''{quote(filename, safe='')}"
+    )
 
     return StreamingResponse(
         stream(),
         media_type=content_type,
-        headers=headers,
+        headers={
+            "Content-Disposition": disposition,
+            "Cache-Control": "no-store, no-cache, must-revalidate",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
