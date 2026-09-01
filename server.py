@@ -1,989 +1,179 @@
-import asyncio
-import re
-import uuid
+import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-
 BASE = Path(__file__).resolve().parent
-DOWNLOADS = BASE / "downloads"
-DOWNLOADS.mkdir(parents=True, exist_ok=True)
+YTDLP_API_URL = os.getenv("YTDLP_API_URL", "http://127.0.0.1:5012").rstrip("/")
+YTDLP_API_KEY = os.getenv("YTDLP_API_KEY", "").strip()
 
 app = FastAPI(title="YouTube Downloader")
 
-tasks = {}
 
-
-# =========================================================
-# PUBLIC PIPED INSTANCES
-# =========================================================
-
-PIPED_INSTANCES = [
-    "https://pipedapi.kavin.rocks",
-    "https://pipedapi.tokhmi.xyz",
-    "https://pipedapi.moomoo.me",
-    "https://pipedapi.syncpundit.io",
-]
-
-
-# =========================================================
-# PUBLIC INVIDIOUS INSTANCES
-# =========================================================
-
-INVIDIOUS_INSTANCES = [
-    "https://yewtu.be",
-    "https://inv.nadeko.net",
-    "https://invidious.nerdvpn.de",
-]
-
-
-class Link(BaseModel):
+class UrlRequest(BaseModel):
     url: str
 
 
-class Download(BaseModel):
+class DownloadRequest(BaseModel):
     url: str
     quality: str = "best"
-    mode: str = "video"
+    media_type: str = "video"
 
 
-# =========================================================
-# URL / VIDEO ID
-# =========================================================
-
-def get_video_id(url: str):
-    parsed = urlparse(url.strip())
-    host = (parsed.hostname or "").lower()
-
-    if host in {"youtu.be", "www.youtu.be"}:
-        value = parsed.path.strip("/").split("/")[0]
-        if value:
-            return value
-
-    if "youtube.com" in host:
-        query = parse_qs(parsed.query)
-
-        if query.get("v"):
-            return query["v"][0]
-
-        parts = [x for x in parsed.path.split("/") if x]
-
-        if len(parts) >= 2 and parts[0] in {
-            "shorts",
-            "embed",
-            "live",
-        }:
-            return parts[1]
-
-    match = re.search(
-        r"(?:v=|youtu\.be/|shorts/|embed/|live/)"
-        r"([A-Za-z0-9_-]{6,})",
-        url,
-    )
-
-    return match.group(1) if match else None
+def validate_url(url: str):
+    url = url.strip()
+    host = (urlparse(url).hostname or "").lower()
+    if host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com"):
+        return url
+    raise ValueError("Нужна ссылка YouTube.")
 
 
-def normalize_url(url: str):
-    video_id = get_video_id(url)
-
-    if not video_id:
-        raise ValueError(
-            "Не удалось определить YouTube video ID."
-        )
-
-    return (
-        "https://www.youtube.com/watch?v="
-        + video_id
-    )
+def headers():
+    h = {"Accept": "application/json"}
+    if YTDLP_API_KEY:
+        h["Authorization"] = f"Bearer {YTDLP_API_KEY}"
+    return h
 
 
-# =========================================================
-# HTTP
-# =========================================================
-
-async def get_json(url: str):
-    async with httpx.AsyncClient(
-        timeout=30,
-        follow_redirects=True,
-    ) as client:
-
-        response = await client.get(url)
-
-        if response.status_code >= 400:
-            raise RuntimeError(
-                f"HTTP {response.status_code}"
-            )
-
-        return response.json()
-
-
-# =========================================================
-# PIPED
-# =========================================================
-
-async def piped_streams(video_id: str):
-    errors = []
-
-    for base in PIPED_INSTANCES:
-
+async def api_get(path: str, params: dict):
+    async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
+        r = await client.get(f"{YTDLP_API_URL}{path}", params=params, headers=headers())
+        if r.status_code >= 400:
+            text = r.text[:6000]
+            raise HTTPException(r.status_code, text or "yt-dlp-api error")
         try:
-            data = await get_json(
-                f"{base}/streams/{video_id}"
-            )
-
-            if data and (
-                data.get("videoStreams")
-                or data.get("audioStreams")
-            ):
-                return data, base
-
-        except Exception as exc:
-            errors.append(
-                f"{base}: {exc}"
-            )
-
-    raise RuntimeError(
-        "Все Piped-инстансы недоступны.\n"
-        + "\n".join(errors)
-    )
+            return r.json()
+        except Exception:
+            raise HTTPException(502, "yt-dlp-api вернул не JSON.")
 
 
-# =========================================================
-# INVIDIOUS
-# =========================================================
+def normalize_info(data):
+    # ungaul's API returns the raw yt-dlp info object.
+    title = data.get("title") or data.get("fulltitle") or "YouTube video"
+    thumbnail = data.get("thumbnail") or ""
+    duration = data.get("duration")
+    uploader = data.get("uploader") or data.get("channel") or ""
 
-async def invidious_video(video_id: str):
-    errors = []
+    formats = []
+    seen = set()
 
-    for base in INVIDIOUS_INSTANCES:
-
+    for fmt in data.get("formats") or []:
+        height = fmt.get("height")
+        if not height:
+            continue
         try:
-            data = await get_json(
-                f"{base}/api/v1/videos/{video_id}"
-            )
-
-            if data and (
-                data.get("adaptiveFormats")
-                or data.get("formatStreams")
-            ):
-                return data, base
-
-        except Exception as exc:
-            errors.append(
-                f"{base}: {exc}"
-            )
-
-    raise RuntimeError(
-        "Все Invidious-инстансы недоступны.\n"
-        + "\n".join(errors)
-    )
-
-
-# =========================================================
-# QUALITY HELPERS
-# =========================================================
-
-def quality_number(value):
-    match = re.search(
-        r"(\d+)",
-        str(value or "")
-    )
-
-    return int(match.group(1)) if match else 0
-
-
-def desired_height(quality: str):
-    if quality == "best":
-        return 4320
-
-    return max(
-        144,
-        min(
-            4320,
-            quality_number(quality),
-        ),
-    )
-
-
-def choose_piped(video_streams, height):
-    candidates = []
-
-    for stream in video_streams or []:
-
-        h = int(
-            stream.get("height") or 0
-        )
-
-        if h <= 0 or h > height:
+            height = int(height)
+        except Exception:
             continue
-
-        url = stream.get("url")
-
-        if not url:
+        if height < 144 or height in seen:
             continue
+        seen.add(height)
+        size = fmt.get("filesize") or fmt.get("filesize_approx")
+        size_str = ""
+        if size:
+            try:
+                size_str = f"{size/1024/1024:.1f} MB"
+            except Exception:
+                pass
+        formats.append({
+            "quality": f"{height}p",
+            "height": height,
+            "file_size_str": size_str,
+        })
 
-        candidates.append(stream)
+    formats.sort(key=lambda x: x["height"], reverse=True)
 
-    if not candidates:
-        return None
+    return {
+        "success": True,
+        "title": title,
+        "thumbnail": thumbnail,
+        "duration": duration,
+        "uploader": uploader,
+        "formats": formats,
+        "audioFormat": "mp3",
+    }
 
-    # Highest resolution first.
-    candidates.sort(
-        key=lambda x: (
-            int(x.get("height") or 0),
-            1 if not x.get("videoOnly") else 0,
-            int(x.get("bitrate") or 0),
-        ),
-        reverse=True,
-    )
-
-    return candidates[0]
-
-
-def choose_audio(video):
-    streams = video.get("audioStreams") or []
-
-    candidates = [
-        x
-        for x in streams
-        if x.get("url")
-    ]
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda x: (
-            int(x.get("bitrate") or 0)
-        ),
-        reverse=True,
-    )
-
-    return candidates[0]
-
-
-def choose_invidious_video(formats, height):
-    candidates = []
-
-    for fmt in formats or []:
-
-        resolution = quality_number(
-            fmt.get("height")
-            or fmt.get("resolution")
-            or fmt.get("qualityLabel")
-        )
-
-        if resolution <= 0 or resolution > height:
-            continue
-
-        if not fmt.get("url"):
-            continue
-
-        video_codec = (
-            fmt.get("type", "")
-            .lower()
-        )
-
-        if "video" not in video_codec:
-            continue
-
-        candidates.append(
-            (
-                resolution,
-                fmt
-            )
-        )
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda x: x[0],
-        reverse=True,
-    )
-
-    return candidates[0][1]
-
-
-def choose_invidious_audio(formats):
-    candidates = []
-
-    for fmt in formats or []:
-
-        if not fmt.get("url"):
-            continue
-
-        if "audio" not in (
-            fmt.get("type", "")
-            .lower()
-        ):
-            continue
-
-        candidates.append(fmt)
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda x: int(
-            re.sub(
-                r"\D",
-                "",
-                str(
-                    x.get("bitrate")
-                    or "0"
-                )
-            ) or 0
-        ),
-        reverse=True,
-    )
-
-    return candidates[0]
-
-
-# =========================================================
-# ROOT / HEALTH
-# =========================================================
 
 @app.get("/")
 async def root():
-    return FileResponse(
-        BASE / "index.html"
-    )
+    return FileResponse(BASE / "index.html")
 
 
 @app.get("/health")
 async def health():
+    try:
+        await api_get("/info", {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"})
+        api_ok = True
+    except Exception:
+        api_ok = False
     return {
         "status": "ok",
-        "engine": "Piped + Invidious",
-        "piped_instances": len(
-            PIPED_INSTANCES
-        ),
-        "invidious_instances": len(
-            INVIDIOUS_INSTANCES
-        ),
+        "engine": "ungaul/yt-dlp-api",
+        "backend": YTDLP_API_URL,
+        "backend_ok": api_ok,
     }
 
-
-# =========================================================
-# INFO
-# =========================================================
 
 @app.post("/api/info")
-async def info(request: Link):
-
+async def info(req: UrlRequest):
     try:
-        url = normalize_url(
-            request.url
-        )
+        url = validate_url(req.url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    data = await api_get("/info", {"url": url})
+    return normalize_info(data)
 
-    except ValueError as exc:
-        raise HTTPException(
-            400,
-            str(exc),
-        )
 
-    video_id = get_video_id(url)
-
-    # -----------------------------------------------------
-    # PIPED
-    # -----------------------------------------------------
-
+@app.get("/api/formats")
+async def formats(url: str):
     try:
+        url = validate_url(url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return await api_get("/formats", {"url": url})
 
-        data, source = await piped_streams(
-            video_id
-        )
-
-        video_streams = (
-            data.get("videoStreams")
-            or []
-        )
-
-        qualities = {}
-
-        for stream in video_streams:
-
-            height = int(
-                stream.get("height") or 0
-            )
-
-            if height <= 0:
-                continue
-
-            old = qualities.get(
-                height
-            )
-
-            if old is None:
-                qualities[height] = stream
-                continue
-
-            old_bitrate = int(
-                old.get("bitrate") or 0
-            )
-
-            new_bitrate = int(
-                stream.get("bitrate") or 0
-            )
-
-            if new_bitrate > old_bitrate:
-                qualities[height] = stream
-
-        format_list = []
-
-        for height in sorted(
-            qualities,
-            reverse=True,
-        ):
-
-            stream = qualities[height]
-
-            format_list.append({
-                "quality": f"{height}p",
-                "height": height,
-                "filesize": None,
-                "file_size_str": "",
-            })
-
-        return {
-            "success": True,
-            "title": data.get(
-                "title",
-                "YouTube video",
-            ),
-            "thumbnail": data.get(
-                "thumbnailUrl",
-                f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
-            ),
-            "duration": data.get(
-                "duration"
-            ),
-            "duration_str": "",
-            "uploader": data.get(
-                "uploader",
-                "",
-            ),
-            "formats": format_list,
-            "audioFormat": "mp3",
-            "source": (
-                "piped"
-            ),
-        }
-
-    except Exception as piped_error:
-
-        # -------------------------------------------------
-        # FALLBACK INVIDIOUS
-        # -------------------------------------------------
-
-        try:
-
-            data, source = (
-                await invidious_video(
-                    video_id
-                )
-            )
-
-            formats = []
-
-            heights = set()
-
-            for fmt in data.get(
-                "adaptiveFormats",
-                [],
-            ):
-
-                height = quality_number(
-                    fmt.get("height")
-                    or fmt.get(
-                        "resolution"
-                    )
-                    or fmt.get(
-                        "qualityLabel"
-                    )
-                )
-
-                if height > 0:
-                    heights.add(height)
-
-            for height in sorted(
-                heights,
-                reverse=True,
-            ):
-
-                formats.append({
-                    "quality": f"{height}p",
-                    "height": height,
-                    "filesize": None,
-                    "file_size_str": "",
-                })
-
-            thumb = ""
-
-            thumbs = data.get(
-                "videoThumbnails"
-            ) or []
-
-            if thumbs:
-                thumb = max(
-                    thumbs,
-                    key=lambda x: (
-                        x.get("width")
-                        or 0
-                    ),
-                ).get(
-                    "url",
-                    "",
-                )
-
-            return {
-                "success": True,
-                "title": data.get(
-                    "title",
-                    "YouTube video",
-                ),
-                "thumbnail": (
-                    thumb
-                    or f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
-                ),
-                "duration": data.get(
-                    "lengthSeconds"
-                ),
-                "duration_str": "",
-                "uploader": data.get(
-                    "author",
-                    "",
-                ),
-                "formats": formats,
-                "audioFormat": "mp3",
-                "source": (
-                    "invidious"
-                ),
-            }
-
-        except Exception as inv_error:
-
-            raise HTTPException(
-                502,
-                "Piped и Invidious не смогли "
-                "получить видео.\n\n"
-                f"Piped: {piped_error}\n\n"
-                f"Invidious: {inv_error}",
-            )
-
-
-# =========================================================
-# DOWNLOAD
-# =========================================================
 
 @app.post("/api/download")
-async def download(request: Download):
-
+async def download(req: DownloadRequest):
     try:
-        url = normalize_url(
-            request.url
-        )
+        url = validate_url(req.url)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
-    except ValueError as exc:
-        raise HTTPException(
-            400,
-            str(exc),
-        )
+    quality = req.quality.strip().lower()
+    if req.media_type == "audio":
+        params = {
+            "url": url,
+            "format": "mp3",
+        }
+    else:
+        params = {
+            "url": url,
+            "format": "mp4",
+        }
+        if quality and quality != "best":
+            params["quality"] = quality
 
-    task_id = uuid.uuid4().hex
-
-    tasks[task_id] = {
-        "status": "queued",
-        "percent": 0,
-        "speed": "",
-        "eta": "",
-        "filename": "",
-        "error": "",
-        "file": "",
-        "log": "",
-    }
-
-    asyncio.create_task(
-        download_worker(
-            task_id,
-            url,
-            request.quality,
-            request.mode,
-        )
-    )
-
+    # Return the backend endpoint. The browser downloads from yt-dlp-api,
+    # keeping the large file off this FastAPI process.
+    from urllib.parse import urlencode
+    direct = f"{YTDLP_API_URL}/download?{urlencode(params)}"
     return {
-        "id": task_id
-    }
-
-
-# =========================================================
-# WORKER
-# =========================================================
-
-async def download_worker(
-    task_id,
-    url,
-    quality,
-    mode,
-):
-
-    task = tasks[task_id]
-
-    work = DOWNLOADS / task_id
-
-    work.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    try:
-
-        video_id = get_video_id(url)
-
-        height = desired_height(
-            quality
-        )
-
-        task["status"] = "downloading"
-        task["message"] = (
-            "Ищу рабочий поток..."
-        )
-
-        video_url = None
-        audio_url = None
-        title = "youtube-video"
-
-        # -------------------------------------------------
-        # Try Piped
-        # -------------------------------------------------
-
-        try:
-
-            data, source = (
-                await piped_streams(
-                    video_id
-                )
-            )
-
-            title = (
-                data.get("title")
-                or title
-            )
-
-            if mode == "audio":
-
-                audio = choose_audio(
-                    data
-                )
-
-                if not audio:
-                    raise RuntimeError(
-                        "Piped audio stream not found."
-                    )
-
-                audio_url = audio["url"]
-
-            else:
-
-                video = choose_piped(
-                    data.get(
-                        "videoStreams",
-                        []
-                    ),
-                    height,
-                )
-
-                audio = choose_audio(
-                    data
-                )
-
-                if not video:
-                    raise RuntimeError(
-                        "Piped video stream not found."
-                    )
-
-                if not audio:
-                    raise RuntimeError(
-                        "Piped audio stream not found."
-                    )
-
-                video_url = video["url"]
-                audio_url = audio["url"]
-
-        except Exception:
-
-            # ------------------------------------------------
-            # Invidious fallback
-            # ------------------------------------------------
-
-            data, source = (
-                await invidious_video(
-                    video_id
-                )
-            )
-
-            title = (
-                data.get("title")
-                or title
-            )
-
-            formats = data.get(
-                "adaptiveFormats",
-                []
-            )
-
-            if mode == "audio":
-
-                audio = choose_invidious_audio(
-                    formats
-                )
-
-                if not audio:
-                    raise RuntimeError(
-                        "Invidious audio stream not found."
-                    )
-
-                audio_url = audio["url"]
-
-            else:
-
-                video = choose_invidious_video(
-                    formats,
-                    height,
-                )
-
-                audio = choose_invidious_audio(
-                    formats
-                )
-
-                if not video:
-                    raise RuntimeError(
-                        "Invidious video stream not found."
-                    )
-
-                if not audio:
-                    raise RuntimeError(
-                        "Invidious audio stream not found."
-                    )
-
-                video_url = video["url"]
-                audio_url = audio["url"]
-
-        # -------------------------------------------------
-        # Safe filename
-        # -------------------------------------------------
-
-        safe_title = re.sub(
-            r'[\\/:*?"<>|]+',
-            "_",
-            title,
-        )[:120].strip()
-
-        if not safe_title:
-            safe_title = "youtube-video"
-
-        output = work / (
-            f"{safe_title}.mp3"
-            if mode == "audio"
-            else f"{safe_title}.mp4"
-        )
-
-        # -------------------------------------------------
-        # FFmpeg
-        # -------------------------------------------------
-
-        if mode == "audio":
-
-            command = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                audio_url,
-                "-vn",
-                "-c:a",
-                "libmp3lame",
-                "-b:a",
-                "192k",
-                str(output),
-            ]
-
-        else:
-
-            command = [
-                "ffmpeg",
-                "-y",
-
-                "-i",
-                video_url,
-
-                "-i",
-                audio_url,
-
-                "-map",
-                "0:v:0",
-
-                "-map",
-                "1:a:0",
-
-                "-c:v",
-                "copy",
-
-                "-c:a",
-                "aac",
-
-                "-b:a",
-                "192k",
-
-                "-shortest",
-
-                "-movflags",
-                "+faststart",
-
-                str(output),
-            ]
-
-        task["message"] = (
-            "Собираю файл..."
-        )
-
-        process = await asyncio.create_subprocess_exec(
-            *command,
-
-            stdout=asyncio.subprocess.PIPE,
-
-            stderr=asyncio.subprocess.STDOUT,
-        )
-
-        while True:
-
-            line = (
-                await process.stdout.readline()
-            )
-
-            if not line:
-                break
-
-            text = line.decode(
-                "utf-8",
-                "replace",
-            ).strip()
-
-            task["log"] = text[-1500:]
-
-            # Try to parse ffmpeg progress.
-            match = re.search(
-                r"time=(\d+):(\d+):([\d.]+)",
-                text,
-            )
-
-            if match:
-                task["percent"] = min(
-                    99,
-                    task["percent"] + 1,
-                )
-
-        code = await process.wait()
-
-        if code != 0:
-
-            raise RuntimeError(
-                task["log"]
-                or "FFmpeg завершился с ошибкой."
-            )
-
-        if not output.exists():
-            raise RuntimeError(
-                "Готовый файл не найден."
-            )
-
-        task.update({
-            "status": "done",
-            "percent": 100,
-            "filename": output.name,
-            "file": str(output),
-            "message": "Готово",
-        })
-
-    except Exception as exc:
-
-        task.update({
-            "status": "error",
-            "percent": 0,
-            "error": str(exc),
-            "message": "Ошибка",
-        })
-
-
-# =========================================================
-# PROGRESS
-# =========================================================
-
-@app.get("/api/progress/{task_id}")
-async def progress(task_id: str):
-
-    if task_id not in tasks:
-        raise HTTPException(
-            404,
-            "Задача не найдена.",
-        )
-
-    task = tasks[task_id]
-
-    result = {
         "success": True,
-        **task,
+        "download_url": direct,
+        "quality": quality,
+        "format": params["format"],
     }
 
-    if task["status"] == "done":
-        result["download_url"] = (
-            f"/api/file/{task_id}"
-        )
 
-    return result
-
-
-# =========================================================
-# FILE
-# =========================================================
-
-@app.get("/api/file/{task_id}")
-async def file(task_id: str):
-
-    task = tasks.get(task_id)
-
-    if not task:
-        raise HTTPException(
-            404,
-            "Задача не найдена.",
-        )
-
-    if task["status"] != "done":
-        raise HTTPException(
-            400,
-            "Файл ещё не готов.",
-        )
-
-    path = Path(
-        task["file"]
-    )
-
-    if not path.exists():
-        raise HTTPException(
-            404,
-            "Файл больше не существует.",
-        )
-
-    return FileResponse(
-        path,
-        filename=task["filename"],
-        media_type="application/octet-stream",
-    )
+@app.get("/api/backend-health")
+async def backend_health():
+    try:
+        data = await api_get("/formats", {"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"})
+        return {"success": True, "backend": YTDLP_API_URL, "response_type": type(data).__name__}
+    except Exception as e:
+        return {"success": False, "backend": YTDLP_API_URL, "error": str(e)}
