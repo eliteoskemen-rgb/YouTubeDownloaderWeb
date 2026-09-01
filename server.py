@@ -3,637 +3,431 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import tempfile
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 
-# =========================================================
-# Paths
-# =========================================================
+app = FastAPI(title="YouTube Downloader")
 
-BASE = Path(__file__).resolve().parent
-DOWNLOADS = BASE / "downloads"
+BASE_DIR = Path(__file__).resolve().parent
+DOWNLOAD_DIR = BASE_DIR / "downloads"
+DOWNLOAD_DIR.mkdir(exist_ok=True)
 
-DOWNLOADS.mkdir(
-    parents=True,
-    exist_ok=True,
+POT_PROVIDER_URL = os.getenv(
+    "POT_PROVIDER_URL",
+    "http://127.0.0.1:4416"
 )
 
-
-# =========================================================
-# App
-# =========================================================
-
-app = FastAPI(
-    title="YouTube Downloader Online"
-)
+jobs = {}
 
 
-# =========================================================
-# State
-# =========================================================
-
-tasks = {}
-
-
-# =========================================================
-# URL validation
-# =========================================================
-
-URL_RE = re.compile(
-    r"^https?://",
-    re.IGNORECASE,
-)
-
-
-# =========================================================
-# yt-dlp configuration
-# =========================================================
-
-YT_ARGS = [
-    # YouTube JS challenge solving
-    "--js-runtimes",
-    "node",
-
-    # bgutil PO Token provider
-    "--extractor-args",
-    (
-        "youtubepot-bgutilhttp:"
-        "base_url=http://127.0.0.1:4416;"
-        "youtube:player-client=mweb"
-    ),
-
-    # Do not download playlists
-    "--no-playlist",
-
-    # Network reliability
-    "--retries",
-    "3",
-
-    "--fragment-retries",
-    "3",
-
-    "--socket-timeout",
-    "30",
-
-    # Avoid unnecessary warnings
-    "--no-warnings",
-]
-
-
-# =========================================================
-# Models
-# =========================================================
-
-class Link(BaseModel):
+class InfoRequest(BaseModel):
     url: str
 
 
-class Download(Link):
+class DownloadRequest(BaseModel):
+    url: str
     quality: str = "best"
-    mode: str = "video"
+    media_type: str = "video"
 
 
-# =========================================================
-# Health
-# =========================================================
+def extract_video_id(url: str):
+    try:
+        parsed = urlparse(url)
+
+        if parsed.hostname in ("youtu.be", "www.youtu.be"):
+            return parsed.path.strip("/").split("/")[0]
+
+        if parsed.hostname and "youtube.com" in parsed.hostname:
+            query = parse_qs(parsed.query)
+
+            if "v" in query:
+                return query["v"][0]
+
+            parts = parsed.path.strip("/").split("/")
+
+            if len(parts) >= 2 and parts[0] in (
+                "shorts",
+                "embed",
+                "live",
+            ):
+                return parts[1]
+
+    except Exception:
+        pass
+
+    match = re.search(
+        r"(?:v=|youtu\.be/|shorts/|embed/|live/)([A-Za-z0-9_-]{6,})",
+        url
+    )
+
+    if match:
+        return match.group(1)
+
+    return None
+
+
+def normalize_youtube_url(url: str):
+    video_id = extract_video_id(url)
+
+    if not video_id:
+        raise ValueError("Не удалось определить YouTube video ID")
+
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
+def get_thumbnail(video_id: str):
+    return f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+
+
+def yt_dlp_base_args():
+    return [
+        "yt-dlp",
+        "--no-warnings",
+        "--no-playlist",
+        "--ignore-config",
+
+        # JavaScript/EJS support
+        "--js-runtimes",
+        "node",
+
+        # Automatically use our PO token provider
+        "--extractor-args",
+        "youtube:player-client=mweb,web_embedded,tv",
+
+        # Don't use account cookies
+        "--no-check-certificates",
+    ]
+
+
+def run_yt_dlp(args, timeout=120):
+    command = yt_dlp_base_args() + args
+
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=timeout,
+    )
+
+    return result
+
+
+def metadata_from_yt_dlp(url: str):
+    result = run_yt_dlp(
+        [
+            "--dump-single-json",
+            "--skip-download",
+            url,
+        ],
+        timeout=90,
+    )
+
+    if result.returncode != 0:
+        raise RuntimeError(
+            result.stderr[-5000:] or "yt-dlp metadata error"
+        )
+
+    return json.loads(result.stdout)
+
+
+@app.get("/")
+async def root():
+    return FileResponse(BASE_DIR / "index.html")
+
 
 @app.get("/health")
-def health():
+async def health():
     return {
         "status": "ok",
         "service": "youtube-downloader",
+        "pot_provider": POT_PROVIDER_URL,
     }
 
 
-# =========================================================
-# Frontend
-# =========================================================
-
-@app.get("/")
-def index():
-    return FileResponse(
-        BASE / "index.html"
-    )
-
-
-# =========================================================
-# Task creation
-# =========================================================
-
-def create_task():
-    tid = uuid.uuid4().hex
-
-    tasks[tid] = {
-        "status": "starting",
-        "percent": 0,
-        "speed": "",
-        "eta": "",
-        "filename": "",
-        "error": "",
-        "file": "",
+@app.get("/api/health")
+async def api_health():
+    return {
+        "status": "ok",
+        "pot_provider": POT_PROVIDER_URL,
     }
 
-    return tid
-
-
-# =========================================================
-# yt-dlp runner
-# =========================================================
-
-async def run_process(cmd):
-
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
-
-    output = []
-
-    while True:
-
-        line = await process.stdout.readline()
-
-        if not line:
-            break
-
-        text = line.decode(
-            "utf-8",
-            "replace",
-        ).strip()
-
-        if text:
-            output.append(text)
-
-            # Keep memory bounded
-            if len(output) > 200:
-                output.pop(0)
-
-    return_code = await process.wait()
-
-    return return_code, output
-
-
-# =========================================================
-# Video information
-# =========================================================
 
 @app.post("/api/info")
-async def info(x: Link):
-
-    url = x.url.strip()
-
-    if not URL_RE.match(url):
-        raise HTTPException(
-            400,
-            "Неверная ссылка",
-        )
-
-    cmd = [
-        "yt-dlp",
-
-        *YT_ARGS,
-
-        "--dump-single-json",
-        "--skip-download",
-
-        url,
-    ]
-
-    return_code, output = await run_process(cmd)
-
-    if return_code != 0:
-
-        error = "\n".join(
-            output[-40:]
-        )
-
-        raise HTTPException(
-            400,
-            error or "Не удалось получить информацию о видео",
-        )
-
-    raw = "\n".join(output)
-
-    # yt-dlp JSON can be surrounded by warnings.
-    # Find the JSON object.
-    start = raw.find("{")
-    end = raw.rfind("}")
-
-    if start == -1 or end == -1:
-        raise HTTPException(
-            500,
-            "yt-dlp не вернул JSON",
-        )
-
+async def get_info(request: InfoRequest):
     try:
+        url = normalize_youtube_url(request.url)
+        video_id = extract_video_id(url)
 
-        data = json.loads(
-            raw[start:end + 1]
-        )
+        # First get information through yt-dlp
+        try:
+            data = await asyncio.to_thread(
+                metadata_from_yt_dlp,
+                url,
+            )
 
-    except Exception:
+            return {
+                "success": True,
+                "id": video_id,
+                "title": data.get("title") or "YouTube video",
+                "thumbnail": (
+                    data.get("thumbnail")
+                    or get_thumbnail(video_id)
+                ),
+                "duration": data.get("duration"),
+                "channel": data.get("channel"),
+                "uploader": data.get("uploader"),
+                "webpage_url": url,
+            }
 
+        except Exception:
+            # Thumbnail still works even if YouTube blocks yt-dlp
+            return {
+                "success": True,
+                "id": video_id,
+                "title": "YouTube video",
+                "thumbnail": get_thumbnail(video_id),
+                "duration": None,
+                "channel": None,
+                "uploader": None,
+                "webpage_url": url,
+                "metadata_limited": True,
+            }
+
+    except ValueError as e:
         raise HTTPException(
-            500,
-            "Не удалось разобрать ответ yt-dlp",
+            status_code=400,
+            detail=str(e)
         )
 
-    return {
-        "id": data.get("id", ""),
-        "title": data.get(
-            "title",
-            "Видео",
-        ),
-        "uploader": (
-            data.get("uploader")
-            or data.get("channel")
-            or ""
-        ),
-        "duration": data.get(
-            "duration"
-        ),
-        "height": data.get(
-            "height"
-        ),
-        "thumbnail": data.get(
-            "thumbnail",
-            "",
-        ),
-        "webpage_url": data.get(
-            "webpage_url",
-            url,
-        ),
-    }
-
-
-# =========================================================
-# Start download
-# =========================================================
-
-@app.post("/api/download")
-async def download(x: Download):
-
-    url = x.url.strip()
-
-    if not URL_RE.match(url):
-
+    except Exception as e:
         raise HTTPException(
-            400,
-            "Неверная ссылка",
+            status_code=500,
+            detail=str(e)
         )
 
-    tid = create_task()
 
-    asyncio.create_task(
-        run_download(
-            tid,
-            x,
-        )
-    )
+def download_video(job_id, url, quality, media_type):
+    job = jobs[job_id]
 
-    return {
-        "id": tid,
-    }
+    job["status"] = "downloading"
+    job["progress"] = 0
+    job["message"] = "Подготавливаю загрузку..."
 
+    temp_dir = DOWNLOAD_DIR / job_id
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
-# =========================================================
-# Download worker
-# =========================================================
-
-async def run_download(
-    tid,
-    x,
-):
-
-    task = tasks[tid]
-
-    work = DOWNLOADS / tid
-
-    work.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    try:
-
-        # -------------------------------------------------
-        # Audio
-        # -------------------------------------------------
-
-        if x.mode == "audio":
-
-            fmt = [
-                "-f",
-                "bestaudio/best",
-
-                "-x",
-
-                "--audio-format",
-                "mp3",
-
-                "--audio-quality",
-                "192K",
-            ]
-
-        # -------------------------------------------------
-        # Video
-        # -------------------------------------------------
-
-        else:
-
-            if x.quality == "best":
-
-                fmt = [
-                    "-f",
-                    (
-                        "bestvideo+bestaudio/"
-                        "best"
-                    ),
-
-                    "--merge-output-format",
-                    "mp4",
-                ]
-
-            else:
-
-                try:
-                    height = int(
-                        x.quality
-                    )
-
-                except ValueError:
-                    height = 720
-
-                fmt = [
-                    "-f",
-                    (
-                        f"bestvideo[height<={height}]"
-                        f"+bestaudio/"
-                        f"best[height<={height}]"
-                        f"/best"
-                    ),
-
-                    "--merge-output-format",
-                    "mp4",
-                ]
-
-        # -------------------------------------------------
-        # Output
-        # -------------------------------------------------
-
-        output = str(
-            work / "%(title)s.%(ext)s"
+    if media_type == "audio":
+        output_template = str(
+            temp_dir / "%(title).120s.%(ext)s"
         )
 
-        ffmpeg = shutil.which(
-            "ffmpeg"
-        )
-
-        cmd = [
-            "yt-dlp",
-
-            *YT_ARGS,
-
-            "--newline",
-            "--progress",
-
-            *fmt,
-
+        args = [
+            "-f",
+            "bestaudio/best",
+            "-x",
+            "--audio-format",
+            "mp3",
+            "--audio-quality",
+            "192K",
             "-o",
-            output,
+            output_template,
+            url,
         ]
 
-        if ffmpeg:
-
-            cmd.extend(
-                [
-                    "--ffmpeg-location",
-                    ffmpeg,
-                ]
-            )
-
-        cmd.append(
-            x.url
+    else:
+        output_template = str(
+            temp_dir / "%(title).120s.%(ext)s"
         )
 
-        # -------------------------------------------------
-        # Start yt-dlp
-        # -------------------------------------------------
+        if quality == "1080p":
+            fmt = (
+                "bestvideo[height<=1080]+bestaudio/"
+                "best[height<=1080]/best"
+            )
 
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
+        elif quality == "720p":
+            fmt = (
+                "bestvideo[height<=720]+bestaudio/"
+                "best[height<=720]/best"
+            )
 
-            stdout=asyncio.subprocess.PIPE,
+        elif quality == "480p":
+            fmt = (
+                "bestvideo[height<=480]+bestaudio/"
+                "best[height<=480]/best"
+            )
 
-            stderr=asyncio.subprocess.STDOUT,
+        else:
+            fmt = (
+                "bestvideo+bestaudio/"
+                "best"
+            )
+
+        args = [
+            "-f",
+            fmt,
+            "--merge-output-format",
+            "mp4",
+            "--remux-video",
+            "mp4",
+            "-o",
+            output_template,
+            url,
+        ]
+
+    try:
+        job["message"] = "Связываюсь с YouTube..."
+
+        result = run_yt_dlp(
+            args,
+            timeout=600,
         )
 
-        logs = []
-
-        while True:
-
-            line = await process.stdout.readline()
-
-            if not line:
-                break
-
-            text = line.decode(
-                "utf-8",
-                "replace",
-            ).strip()
-
-            if not text:
-                continue
-
-            logs.append(text)
-
-            if len(logs) > 100:
-                logs.pop(0)
-
-            # ---------------------------------------------
-            # Download progress
-            # ---------------------------------------------
-
-            match = re.search(
-                r"\[download\]\s+"
-                r"([\d.]+)%"
-                r".*?"
-                r"at\s+(.+?)\s+"
-                r"ETA\s+(.+)",
-                text,
-            )
-
-            if match:
-
-                try:
-
-                    task["percent"] = float(
-                        match.group(1)
-                    )
-
-                except ValueError:
-                    pass
-
-                task["speed"] = (
-                    match.group(2)
-                )
-
-                task["eta"] = (
-                    match.group(3)
-                )
-
-                task["status"] = (
-                    "downloading"
-                )
-
-            # ---------------------------------------------
-            # Processing
-            # ---------------------------------------------
-
-            if (
-                "Destination:" in text
-                or "[Merger]" in text
-                or "[ExtractAudio]" in text
-                or "[ffmpeg]" in text
-            ):
-
-                task["status"] = (
-                    "processing"
-                )
-
-        return_code = await process.wait()
-
-        if return_code != 0:
-
-            error = "\n".join(
-                logs[-30:]
-            )
-
+        if result.returncode != 0:
             raise RuntimeError(
-                error
-                or "yt-dlp завершился с ошибкой"
+                result.stderr[-8000:]
+                or "Download failed"
             )
 
-        # -------------------------------------------------
-        # Find file
-        # -------------------------------------------------
-
-        candidates = [
-            p
-            for p in work.iterdir()
+        files = [
+            p for p in temp_dir.iterdir()
             if p.is_file()
         ]
 
-        if not candidates:
-
+        if not files:
             raise RuntimeError(
-                "yt-dlp завершился успешно, "
-                "но готовый файл не найден"
+                "yt-dlp завершился без созданного файла"
             )
 
-        # Prefer final media files
-        media = [
-            p
-            for p in candidates
-            if p.suffix.lower()
-            in {
-                ".mp4",
-                ".mkv",
-                ".webm",
-                ".mp3",
-                ".m4a",
-                ".opus",
-            }
-        ]
-
-        if media:
-            candidates = media
-
-        file_path = max(
-            candidates,
-            key=lambda p: p.stat().st_mtime,
+        output_file = max(
+            files,
+            key=lambda p: p.stat().st_mtime
         )
 
-        task.update(
-            {
-                "status": "done",
-                "percent": 100,
-                "filename": file_path.name,
-                "file": str(file_path),
-                "error": "",
-            }
-        )
+        job["status"] = "finished"
+        job["progress"] = 100
+        job["message"] = "Готово"
+        job["file"] = str(output_file)
+        job["filename"] = output_file.name
 
-    except Exception as error:
-
-        task.update(
-            {
-                "status": "error",
-                "error": str(error)[-5000:],
-            }
-        )
+    except Exception as e:
+        job["status"] = "error"
+        job["message"] = str(e)
 
 
-# =========================================================
-# Progress
-# =========================================================
-
-@app.get("/api/progress/{tid}")
-def progress(tid: str):
-
-    if tid not in tasks:
-
+@app.post("/api/download")
+async def start_download(request: DownloadRequest):
+    try:
+        url = normalize_youtube_url(request.url)
+    except ValueError as e:
         raise HTTPException(
-            404,
-            "Задача не найдена",
+            status_code=400,
+            detail=str(e)
         )
 
-    return tasks[tid]
+    job_id = uuid.uuid4().hex
 
+    jobs[job_id] = {
+        "status": "queued",
+        "progress": 0,
+        "message": "В очереди...",
+        "file": None,
+        "filename": None,
+    }
 
-# =========================================================
-# File
-# =========================================================
-
-@app.get("/api/file/{tid}")
-def file(tid: str):
-
-    task = tasks.get(tid)
-
-    if (
-        not task
-        or task["status"] != "done"
-        or not task["file"]
-    ):
-
-        raise HTTPException(
-            404,
-            "Файл ещё не готов",
+    asyncio.create_task(
+        asyncio.to_thread(
+            download_video,
+            job_id,
+            url,
+            request.quality,
+            request.media_type,
         )
-
-    file_path = Path(
-        task["file"]
     )
 
-    if not file_path.exists():
+    return {
+        "success": True,
+        "job_id": job_id,
+    }
 
+
+@app.get("/api/progress/{job_id}")
+async def progress(job_id: str):
+    job = jobs.get(job_id)
+
+    if not job:
         raise HTTPException(
-            404,
-            "Файл удалён",
+            status_code=404,
+            detail="Job not found"
+        )
+
+    response = {
+        "success": True,
+        **job,
+    }
+
+    if job["status"] == "finished":
+        response["download_url"] = (
+            f"/api/file/{job_id}"
+        )
+
+    return response
+
+
+@app.get("/api/file/{job_id}")
+async def get_file(job_id: str):
+    job = jobs.get(job_id)
+
+    if not job:
+        raise HTTPException(
+            status_code=404,
+            detail="Job not found"
+        )
+
+    if job["status"] != "finished":
+        raise HTTPException(
+            status_code=400,
+            detail="Файл ещё не готов"
+        )
+
+    file_path = Path(job["file"])
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Файл больше не существует"
         )
 
     return FileResponse(
-        file_path,
-
-        filename=file_path.name,
-
-        media_type=(
-            "application/octet-stream"
-        ),
+        path=file_path,
+        filename=job["filename"],
+        media_type="application/octet-stream",
     )
+
+
+@app.get("/api/debug/yt-dlp")
+async def debug_yt_dlp():
+    result = subprocess.run(
+        [
+            "yt-dlp",
+            "--version",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    return {
+        "yt_dlp": result.stdout.strip(),
+        "stderr": result.stderr.strip(),
+        "pot_provider": POT_PROVIDER_URL,
+    }
