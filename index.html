@@ -2,242 +2,120 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>YouTube Downloader</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;color:#fff;font-family:Inter,Arial,sans-serif;background:radial-gradient(circle at 10% 20%,rgba(111,84,255,.22),transparent 33%),radial-gradient(circle at 90% 80%,rgba(33,183,255,.14),transparent 34%),linear-gradient(145deg,#070816,#04060d)}
-.wrap{max-width:1150px;margin:auto;padding:26px 28px}
-header{display:flex;justify-content:space-between;align-items:center}
-.brand{display:flex;gap:12px;align-items:center}.logo{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,#765cff,#24b8ff);font-weight:900}
-.brand h1{font-size:18px;margin:0}.brand p{margin:3px 0 0;font-size:11px;color:#8f97aa}
-.status{padding:8px 12px;border:1px solid #252a3a;border-radius:999px;color:#aab1c2;font-size:11px}
-main{min-height:calc(100vh - 96px);display:grid;grid-template-columns:1fr 485px;align-items:center;gap:62px}
-.kicker{font-size:11px;letter-spacing:5px;color:#9382ff;font-weight:800}
-h2{font-size:66px;line-height:.95;letter-spacing:-4px;margin:20px 0}
-.grad{background:linear-gradient(90deg,#8d68ff,#51c8ff);-webkit-background-clip:text;background-clip:text;color:transparent}
-.lead{max-width:590px;color:#aeb5c6;line-height:1.7;font-size:15px}
-.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:25px}.badge{border:1px solid #252a3a;border-radius:9px;padding:7px 10px;color:#c7ccdb;font-size:11px;background:rgba(255,255,255,.02)}
-.card{padding:22px;border-radius:22px;border:1px solid #252a3a;background:rgba(15,19,32,.86);box-shadow:0 30px 90px rgba(0,0,0,.38);backdrop-filter:blur(18px)}
-label{display:block;font-size:11px;color:#a0a8bb;margin-bottom:8px}
-.row{display:flex;gap:8px}input,select{width:100%;height:48px;border:1px solid #252a3a;border-radius:12px;background:#080b14;color:#fff;padding:0 13px;outline:0}input:focus,select:focus{border-color:#665fff}
-.btn,.download{border:0;border-radius:12px;color:#fff;background:linear-gradient(100deg,#755cff,#2bbcff);font-weight:800;cursor:pointer}.btn{width:52px}.download{height:50px;width:100%;margin-top:14px}
-.btn:disabled,.download:disabled{opacity:.45;cursor:not-allowed}
+body{margin:0;min-height:100vh;color:#fff;font-family:Inter,Arial,sans-serif;background:radial-gradient(circle at 10% 20%,rgba(112,81,255,.22),transparent 34%),radial-gradient(circle at 90% 80%,rgba(35,185,255,.13),transparent 34%),linear-gradient(145deg,#070816,#04060d 60%,#06141d)}
+.wrap{max-width:1160px;margin:auto;padding:25px 28px}
+.head{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(135deg,#775bff,#28baff);font-weight:900}
+.brand h1{font-size:18px;margin:0}.brand p{font-size:11px;color:#8f97aa;margin:3px 0}
+.head-right{display:flex;align-items:center;gap:9px}
+.status{font-size:11px;color:#67e6b4;border:1px solid rgba(103,230,180,.22);padding:8px 12px;border-radius:999px;background:rgba(103,230,180,.055);display:inline-flex;align-items:center;gap:7px}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#42e6a6;box-shadow:0 0 6px #42e6a6,0 0 14px rgba(66,230,166,.75);animation:blink 1.15s infinite}
+@keyframes blink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.28;transform:scale(.72)}}
+.status.error{color:#ff7186;border-color:rgba(255,113,134,.24);background:rgba(255,113,134,.05)}.status.error .status-dot{background:#ff5f76;box-shadow:0 0 6px #ff5f76,0 0 14px rgba(255,95,118,.75)}
+.status.busy{color:#74c8ff;border-color:rgba(116,200,255,.22);background:rgba(116,200,255,.05)}.status.busy .status-dot{background:#55bdff;box-shadow:0 0 6px #55bdff,0 0 14px rgba(85,189,255,.75)}
+.langs{display:flex;gap:6px}.lang-btn{border:1px solid #252a3a;background:#0a0e18;color:#cdd4e2;border-radius:10px;padding:7px 9px;font-size:11px;font-weight:800;cursor:pointer}.lang-btn.active{background:linear-gradient(100deg,#755cff,#2bbcff);color:#fff;border-color:transparent}
+main{min-height:calc(100vh - 94px);display:grid;grid-template-columns:1fr 490px;gap:60px;align-items:center}
+.kicker{font-size:11px;letter-spacing:5px;color:#9a86ff;font-weight:800}
+h2{font-size:66px;line-height:.95;letter-spacing:-4px;margin:20px 0}.grad{background:linear-gradient(90deg,#916cff,#50c8ff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lead{max-width:600px;color:#adb4c6;line-height:1.7;font-size:15px}.badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:25px}.badge{border:1px solid #252a3a;border-radius:9px;padding:7px 10px;color:#c8cedd;font-size:11px;background:rgba(255,255,255,.02)}
+.card{padding:22px;border:1px solid #252a3a;border-radius:22px;background:rgba(15,19,32,.86);box-shadow:0 30px 90px rgba(0,0,0,.38);backdrop-filter:blur(18px)}
+label{display:block;color:#a0a8ba;font-size:11px;margin-bottom:8px}.row{display:flex;gap:8px}
+input,select{width:100%;height:48px;background:#080b14;border:1px solid #252a3a;color:#fff;border-radius:12px;padding:0 13px;outline:0}
+.go,.download{border:0;color:#fff;border-radius:12px;background:linear-gradient(100deg,#755cff,#2bbcff);font-weight:800;cursor:pointer}.go{width:54px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
-.preview{display:none;margin-top:15px;overflow:hidden;border:1px solid #252a3a;border-radius:15px;background:#080b13}
-.preview img{width:100%;height:235px;display:block;object-fit:cover}
+.preview{display:none;margin-top:15px;border:1px solid #252a3a;border-radius:15px;overflow:hidden;background:#080b13}.preview img{width:100%;height:235px;display:block;object-fit:cover}
 .meta{padding:13px}.title{font-size:14px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sub{font-size:11px;color:#8f97aa;margin-top:5px}
-.progress{margin-top:14px;padding:14px;border:1px solid #252a3a;border-radius:14px;background:rgba(0,0,0,.17)}
-.top{display:flex;justify-content:space-between;font-size:11px;color:#aab1c3}.bar{height:6px;margin-top:10px;border-radius:99px;overflow:hidden;background:#1a2030}.fill{width:0;height:100%;background:linear-gradient(90deg,#755cff,#2bbcff);transition:.2s}
+.download{width:100%;height:50px;margin-top:14px}.go:disabled,.download:disabled{opacity:.45;cursor:not-allowed}
+.progress{margin-top:14px;padding:14px;border-radius:14px;border:1px solid #252a3a;background:rgba(0,0,0,.16)}.top{display:flex;justify-content:space-between;font-size:11px;color:#abb1c2}
+.bar{height:6px;background:#1a2030;border-radius:99px;overflow:hidden;margin-top:10px}.fill{width:0;height:100%;background:linear-gradient(90deg,#755cff,#2bbcff);transition:.2s}
 .msg{font-size:11px;color:#9fa7bb;margin-top:9px;white-space:pre-wrap}.ok{color:#4be0a1}.err{color:#ff667f}
-.link{display:none;margin-top:11px;text-align:center;text-decoration:none;color:#4be0a1;border:1px solid rgba(75,224,161,.25);background:rgba(75,224,161,.08);padding:12px;border-radius:12px;font-size:12px;font-weight:800}
-.note{text-align:center;margin-top:9px;color:#677086;font-size:10px;line-height:1.5}
-footer{text-align:center;padding:15px;color:#565f74;font-size:10px}
+.app-card{margin-top:14px;padding:16px;border:1px solid rgba(117,92,255,.35);border-radius:16px;background:linear-gradient(135deg,rgba(117,92,255,.11),rgba(43,188,255,.06))}
+.app-title{font-size:12px;font-weight:800;margin-bottom:5px}.app-desc{font-size:11px;color:#aeb5c6;line-height:1.5;margin-bottom:12px}
+.app-btn{display:block;text-align:center;text-decoration:none;color:#fff;border-radius:11px;padding:11px 12px;background:linear-gradient(100deg,#755cff,#2bbcff);font-size:12px;font-weight:800;cursor:pointer}
+.note{font-size:10px;color:#687087;text-align:center;line-height:1.5;margin-top:9px}footer{text-align:center;padding:15px;color:#565f74;font-size:10px}
 @media(max-width:900px){main{grid-template-columns:1fr;gap:30px;padding:45px 0}h2{font-size:50px}}
-@media(max-width:560px){.wrap{padding:18px 14px}.grid{grid-template-columns:1fr}h2{font-size:43px}}
+@media(max-width:560px){.wrap{padding:18px 14px}.grid{grid-template-columns:1fr}.head{align-items:flex-start}.head-right{flex-wrap:wrap;justify-content:flex-end}h2{font-size:42px}}
 </style>
 </head>
 <body>
 <div class="wrap">
-<header>
+<header class="head">
   <div class="brand"><div class="logo">▶</div><div><h1 data-i18n="brand">YouTube Downloader</h1><p data-i18n="brand_sub">Быстро. Красиво. Без лишних действий.</p></div></div>
-  <div class="status" id="status">● Онлайн</div>
+  <div class="head-right">
+    <div class="langs">
+      <button class="lang-btn active" data-lang="ru">🇷🇺 RU</button>
+      <button class="lang-btn" data-lang="kk">🇰🇿 KZ</button>
+      <button class="lang-btn" data-lang="en">🇬🇧 EN</button>
+    </div>
+    <div id="status" class="status"><span class="status-dot"></span><span id="statusText">Онлайн</span></div>
+  </div>
 </header>
 
 <main>
 <section>
   <div class="kicker" data-i18n="kicker">ONLINE VIDEO DOWNLOADER</div>
   <h2>Скачивай<br>видео<br><span class="grad" data-i18n="hero">в один клик.</span></h2>
-  <p class="lead">Вставь ссылку на YouTube и бесплатно скачай видео до 720p. Для 4K и других высоких качеств используй Windows-программу.</p>
-  <div class="badges"><span class="badge">720P FREE</span><span class="badge">MP4</span><span class="badge">MP3</span><span class="badge">1080P</span><span class="badge">4K → APP</span><span class="badge">ONLINE</span></div>
+  <p class="lead" data-i18n="lead">Вставь ссылку на YouTube и бесплатно скачай видео до 720p. Для 4K и других высоких качеств используй Windows-программу.</p>
+  <div class="badges"><span class="badge">720P FREE</span><span class="badge">MP4</span><span class="badge">MP3</span><span class="badge">4K → APP</span></div>
 </section>
 
 <section class="card">
   <label data-i18n="url_label">Ссылка на YouTube</label>
-  <div class="row">
-    <input id="url" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
-    <button class="btn" id="check">↘</button>
-  </div>
+  <div class="row"><input id="url" placeholder="https://youtube.com/watch?v=..." autocomplete="off"><button class="go" id="check">↘</button></div>
 
   <div class="grid">
-    <div><label data-i18n="quality_label">Качество</label><select id="quality" disabled><option>Проверь видео</option></select></div>
+    <div><label data-i18n="quality_label">Качество</label><select id="quality" disabled><option data-i18n="check_video">Проверь видео</option></select></div>
     <div><label data-i18n="format_label">Формат</label><select id="type"><option value="video" data-i18n="video_option">Видео MP4</option><option value="audio" data-i18n="audio_option">Аудио MP3</option></select></div>
   </div>
 
-  <div class="preview" id="preview">
-    <img id="thumb" alt="Обложка">
-    <div class="meta"><div class="title" id="title"></div><div class="sub" id="sub"></div></div>
-  </div>
-
+  <div class="preview" id="preview"><img id="thumb" alt="Thumbnail"><div class="meta"><div class="title" id="title"></div><div class="sub" id="sub"></div></div></div>
   <button class="download" id="download" disabled data-i18n="download_btn">↓ Скачать</button>
 
   <div class="progress">
     <div class="top"><span id="ptext">Ожидаю ссылку...</span><span id="pct">0%</span></div>
-    <div class="bar"><div class="fill" id="fill"></div></div>
-    <div class="msg" id="msg">—</div>
-    <a class="link" id="link" target="_blank" rel="noopener">Скачать готовый файл</a>
+    <div class="bar"><div id="fill" class="fill"></div></div>
+    <div id="msg" class="msg">—</div>
   </div>
 
-  <div style="margin-top:14px;padding:16px;border:1px solid rgba(117,92,255,.35);border-radius:16px;background:linear-gradient(135deg,rgba(117,92,255,.10),rgba(43,188,255,.06))">
-      <div style="font-size:12px;font-weight:800;margin-bottom:5px"><span data-i18n="need4k">Нужно 4K?</span></div>
-      <div style="font-size:11px;color:#aeb5c6;line-height:1.5;margin-bottom:12px"><span data-i18n="app_desc">На сайте бесплатно скачивание до 720p. Для 4K и других высоких качеств используй Windows-программу.</span></div>
-      <a href="/download-app" download="YouTubeDownloader-Setup.exe" style="display:block;text-align:center;text-decoration:none;color:#fff;border-radius:11px;padding:11px 12px;background:linear-gradient(100deg,#755cff,#2bbcff);font-size:12px;font-weight:800"><span data-i18n="app_btn">↓ Скачать YouTube Downloader для Windows</span></a>
-    </div>
-    <div class="note"><span data-i18n="free_note">Бесплатно на сайте: 144p–720p + MP3. Высокие качества — в Windows-программе.</span></div>
+  <div class="app-card">
+    <div class="app-title" data-i18n="need4k">Нужно 4K?</div>
+    <div class="app-desc" data-i18n="app_desc">На сайте бесплатно скачивание до 720p. Для 4K и других высоких качеств используй Windows-программу.</div>
+    <a class="app-btn" href="/download-app" data-i18n="app_btn">↓ Скачать YouTube Downloader для Windows</a>
+  </div>
+
+  <div class="note" data-i18n="free_note">Бесплатно на сайте: 144p–720p + MP3. Высокие качества — в Windows-программе.</div>
 </section>
 </main>
+
 <footer>© 2026 YouTube Downloader</footer>
 </div>
 
 <script>
-const $=id=>document.getElementById(id);
-let info=null,url="";
-
-function state(text,p=0,cls=""){ $("ptext").textContent=text;$("pct").textContent=Math.round(p)+"%";$("fill").style.width=Math.max(0,Math.min(100,p))+"%";$("msg").className="msg "+cls; }
-function fail(text){state("Ошибка",0,"err");$("msg").textContent=text;$("status").textContent="● Ошибка";}
-function fill(formats){
-  const s=$("quality");s.innerHTML="";
-  const rank=x=>parseInt(String(x).replace("p",""))||0;
-  const a=[...(formats||[])]
-    .filter(v=>rank(v.quality)<=720)
-    .filter((v,i,arr)=>arr.findIndex(x=>x.quality===v.quality)===i)
-    .sort((a,b)=>rank(b.quality)-rank(a.quality));
-  a.forEach(f=>{const o=document.createElement("option");o.value=f.quality;o.textContent=f.file_size_str?`${f.quality} · ${f.file_size_str}`:f.quality;s.appendChild(o);});
-  s.disabled=!a.length;
-  if(a.length)s.value=a[0].quality;
-}
-async function check(){
-  const u=$("url").value.trim(); if(!u)return fail("Вставь ссылку на YouTube.");
-  $("check").disabled=true;$("download").disabled=true;$("link").style.display="none";$("status").textContent="● Проверяю...";state("Получаю данные...",25);
-  try{
-    const r=await fetch("/api/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:u})});
-    const d=await r.json(); if(!r.ok)throw new Error(d.detail||"Не удалось получить информацию.");
-    info=d;url=u;
-    $("title").textContent=d.title||"YouTube video";
-    $("sub").textContent=d.duration_str?`Длительность: ${d.duration_str}`:"";
-    $("thumb").src=d.thumbnail||"";
-    $("preview").style.display="block";
-    fill(d.formats);
-    $("download").disabled=!(d.formats?.some(f=>parseInt(String(f.quality).replace("p",""))<=720)||d.audioFormat);
-    state("Видео найдено",100,"ok");$("msg").textContent="Выбери качество и нажми «Скачать»."; $("status").textContent="● Готово";
-  }catch(e){fail(e.message)}finally{$("check").disabled=false}
-}
-async function download(){
-  if(!url)return fail("Сначала проверь видео.");
-  const q=$("type").value==="audio"?"mp3":$("quality").value;
-  if(!q)return fail("Нет доступного качества.");
-  $("download").disabled=true;$("check").disabled=true;$("link").style.display="none";$("status").textContent="● Создаю ссылку...";state("Готовлю файл...",70);
-  try{
-    const r=await fetch("/api/download",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,quality:q})});
-    const d=await r.json(); if(!r.ok)throw new Error(d.detail||"Не удалось создать ссылку.");
-    $("link").href=d.download_url;
-    $("link").textContent=`↓ Скачать ${d.filename||q}${d.file_size_str?" · "+d.file_size_str:""}`;
-    $("link").style.display="block";
-    state("Готово",100,"ok");$("msg").textContent="Файл можно скачать напрямую с Tunelio."; $("status").textContent="● Готово";
-  }catch(e){fail(e.message)}finally{$("download").disabled=false;$("check").disabled=false}
-}
-$("check").onclick=check;$("download").onclick=download;
-$("url").addEventListener("keydown",e=>{if(e.key==="Enter")check();});
-$("type").addEventListener("change",()=>{if(!info)return;if($("type").value==="audio"){$("quality").disabled=true;$("quality").innerHTML='<option value="mp3">MP3</option>';$("download").disabled=!info.audioFormat;}else{fill(info.formats);$("download").disabled=!(info.formats?.length);}});
-
+const $=id=>document.getElementById(id);let info=null,currentUrl="";
 const I18N={
-ru:{
- brand:"YouTube Downloader",
- brand_sub:"Быстро. Красиво. Без лишних действий.",
- kicker:"ONLINE VIDEO DOWNLOADER",
- hero:"в один клик.",
- app_desc:"На сайте бесплатно скачивание до 720p. Для 4K и других высоких качеств используй Windows-программу.",
- url_label:"Ссылка на YouTube",
- quality_label:"Качество",
- format_label:"Формат",
- video_option:"Видео MP4",
- audio_option:"Аудио MP3",
- download_btn:"↓ Скачать",
- need4k:"Нужно 4K?",
- free_note:"Бесплатно на сайте: 144p–720p + MP3. Высокие качества — в Windows-программе.",
- app_btn:"↓ Скачать YouTube Downloader для Windows",
- check_video:"Проверь видео",
- online:"● Онлайн",
- checking:"● Проверяю...",
- getting:"Получаю данные...",
- found:"Видео найдено",
- ready:"● Готово",
- choose:"Выбери качество и нажми «Скачать».",
- creating:"● Создаю ссылку...",
- preparing:"Готовлю файл...",
- file_ready:"Файл можно скачать напрямую с Tunelio.",
- error:"● Ошибка"
-},
-kk:{
- brand:"YouTube Downloader",
- brand_sub:"Жылдам. Әдемі. Артық әрекетсіз.",
- kicker:"ONLINE VIDEO DOWNLOADER",
- hero:"бір басуда.",
- app_desc:"Сайтта 720p-ге дейін тегін жүктеу. 4K және жоғары сапалар үшін Windows бағдарламасын пайдаланыңыз.",
- url_label:"YouTube сілтемесі",
- quality_label:"Сапа",
- format_label:"Пішім",
- video_option:"Видео MP4",
- audio_option:"Аудио MP3",
- download_btn:"↓ Жүктеу",
- need4k:"4K керек пе?",
- free_note:"Сайтта тегін: 144p–720p + MP3. Жоғары сапалар — Windows бағдарламасында.",
- app_btn:"↓ YouTube Downloader Windows бағдарламасын жүктеу",
- check_video:"Видеоны тексеріңіз",
- online:"● Онлайн",
- checking:"● Тексерілуде...",
- getting:"Ақпарат алынуда...",
- found:"Видео табылды",
- ready:"● Дайын",
- choose:"Сапаны таңдап, «Жүктеу» түймесін басыңыз.",
- creating:"● Сілтеме жасалуда...",
- preparing:"Файл дайындалуда...",
- file_ready:"Файлды Tunelio арқылы жүктеуге болады.",
- error:"● Қате"
-},
-en:{
- brand:"YouTube Downloader",
- brand_sub:"Fast. Clean. No unnecessary steps.",
- kicker:"ONLINE VIDEO DOWNLOADER",
- hero:"in one click.",
- app_desc:"Free downloads up to 720p on the website. Use the Windows app for 4K and higher qualities.",
- url_label:"YouTube link",
- quality_label:"Quality",
- format_label:"Format",
- video_option:"Video MP4",
- audio_option:"Audio MP3",
- download_btn:"↓ Download",
- need4k:"Need 4K?",
- free_note:"Free on the website: 144p–720p + MP3. Higher qualities are available in the Windows app.",
- app_btn:"↓ Download YouTube Downloader for Windows",
- check_video:"Check video",
- online:"● Online",
- checking:"● Checking...",
- getting:"Getting information...",
- found:"Video found",
- ready:"● Ready",
- choose:"Choose quality and click «Download».",
- creating:"● Creating link...",
- preparing:"Preparing file...",
- file_ready:"File can be downloaded directly via Tunelio.",
- error:"● Error"
-}};
+ru:{brand:"YouTube Downloader",brand_sub:"Быстро. Красиво. Без лишних действий.",kicker:"ONLINE VIDEO DOWNLOADER",hero:"в один клик.",lead:"Вставь ссылку на YouTube и бесплатно скачай видео до 720p. Для 4K и других высоких качеств используй Windows-программу.",url_label:"Ссылка на YouTube",quality_label:"Качество",format_label:"Формат",video_option:"Видео MP4",audio_option:"Аудио MP3",download_btn:"↓ Скачать",need4k:"Нужно 4K?",app_desc:"На сайте бесплатно скачивание до 720p. Для 4K и других высоких качеств используй Windows-программу.",app_btn:"↓ Скачать YouTube Downloader для Windows",free_note:"Бесплатно на сайте: 144p–720p + MP3. Высокие качества — в Windows-программе.",check_video:"Проверь видео",online:"Онлайн",checking:"Проверяю...",getting:"Получаю данные...",found:"Видео найдено",ready:"Готово",creating:"Создаю ссылку...",error:"Ошибка"},
+kk:{brand:"YouTube Downloader",brand_sub:"Жылдам. Әдемі. Артық әрекетсіз.",kicker:"ONLINE VIDEO DOWNLOADER",hero:"бір басуда.",lead:"YouTube сілтемесін енгізіп, 720p-ге дейін тегін жүктеңіз. 4K және жоғары сапалар үшін Windows бағдарламасын пайдаланыңыз.",url_label:"YouTube сілтемесі",quality_label:"Сапа",format_label:"Пішім",video_option:"Видео MP4",audio_option:"Аудио MP3",download_btn:"↓ Жүктеу",need4k:"4K керек пе?",app_desc:"Сайтта 720p-ге дейін тегін жүктеу. 4K және жоғары сапалар үшін Windows бағдарламасын пайдаланыңыз.",app_btn:"↓ YouTube Downloader Windows бағдарламасын жүктеу",free_note:"Сайтта тегін: 144p–720p + MP3. Жоғары сапалар — Windows бағдарламасында.",check_video:"Видеоны тексеру",online:"Онлайн",checking:"Тексерілуде...",getting:"Ақпарат алынуда...",found:"Видео табылды",ready:"Дайын",creating:"Сілтеме жасалуда...",error:"Қате"},
+en:{brand:"YouTube Downloader",brand_sub:"Fast. Clean. No unnecessary steps.",kicker:"ONLINE VIDEO DOWNLOADER",hero:"in one click.",lead:"Paste a YouTube link and download up to 720p for free. Use the Windows app for 4K and higher qualities.",url_label:"YouTube link",quality_label:"Quality",format_label:"Format",video_option:"Video MP4",audio_option:"Audio MP3",download_btn:"↓ Download",need4k:"Need 4K?",app_desc:"Free downloads up to 720p on the website. Use the Windows app for 4K and higher qualities.",app_btn:"↓ Download YouTube Downloader for Windows",free_note:"Free on the website: 144p–720p + MP3. Higher qualities are available in the Windows app.",check_video:"Check video",online:"Online",checking:"Checking...",getting:"Getting information...",found:"Video found",ready:"Ready",creating:"Creating link...",error:"Error"}
+};
+let lang=localStorage.getItem("siteLang")||"ru";
+function tr(k){return I18N[lang]?.[k]||I18N.ru[k]||k}
+function setStatus(key,type="ok"){const el=$("status");el.className="status "+(type==="error"?"error":type==="busy"?"busy":"");$("statusText").textContent=tr(key)}
+function applyLang(v){lang=I18N[v]?v:"ru";localStorage.setItem("siteLang",lang);document.documentElement.lang=lang==="kk"?"kk":lang;document.querySelectorAll("[data-i18n]").forEach(e=>{const k=e.dataset.i18n;if(I18N[lang][k])e.textContent=I18N[lang][k]});document.querySelectorAll(".lang-btn").forEach(b=>b.classList.toggle("active",b.dataset.lang===lang));if(info)setStatus("ready")}
+document.querySelectorAll(".lang-btn").forEach(b=>b.addEventListener("click",()=>applyLang(b.dataset.lang)));applyLang(lang);
 
-let currentLang=localStorage.getItem("siteLang")||"ru";
-function tr(k){return (I18N[currentLang]&&I18N[currentLang][k])||I18N.ru[k]||k}
-function applyLang(lang){
- currentLang=I18N[lang]?lang:"ru";
- localStorage.setItem("siteLang",currentLang);
- document.documentElement.lang=currentLang==="kk"?"kk":currentLang;
- document.querySelectorAll("[data-i18n]").forEach(el=>{
-   const key=el.dataset.i18n;
-   if(I18N[currentLang][key]) el.textContent=I18N[currentLang][key];
- });
- document.querySelectorAll(".lang-btn").forEach(b=>b.classList.toggle("active",b.dataset.lang===currentLang));
-}
-document.querySelectorAll(".lang-btn").forEach(b=>b.addEventListener("click",()=>applyLang(b.dataset.lang)));
-applyLang(currentLang);
-
+function state(text,p=0,c=""){ $("ptext").textContent=text;$("pct").textContent=Math.round(p)+"%";$("fill").style.width=Math.max(0,Math.min(100,p))+"%";$("msg").className="msg "+c }
+function fail(t){state(tr("error"),0,"err");$("msg").textContent=t;setStatus("error","error")}
+async function jsonFetch(url,opt){const r=await fetch(url,opt);const text=await r.text();let d={};try{d=text?JSON.parse(text):{}}catch{throw Error(text||`HTTP ${r.status}`)}if(!r.ok)throw Error(d.detail||d.error||d.message||`HTTP ${r.status}`);return d}
+function fill(a){const s=$("quality");s.innerHTML="";const list=[...(a||[])].filter(f=>(parseInt(String(f.quality).replace("p",""))||0)<=720).sort((x,y)=>(y.height||0)-(x.height||0));for(const f of list){const o=document.createElement("option");o.value=f.quality;o.textContent=f.file_size_str?`${f.quality} · ${f.file_size_str}`:f.quality;s.appendChild(o)}s.disabled=!list.length}
+async function checkVideo(){const u=$("url").value.trim();if(!u)return fail("Вставь ссылку на YouTube.");$("check").disabled=true;$("download").disabled=true;$("preview").style.display="none";setStatus("checking","busy");state(tr("getting"),20);try{const d=await jsonFetch("/api/info",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:u})});info=d;currentUrl=u;$("title").textContent=d.title||"YouTube video";$("sub").textContent=d.duration?`Длительность: ${Math.floor(d.duration/60)}:${String(Math.floor(d.duration%60)).padStart(2,"0")}`:"";$("thumb").src=d.thumbnail||"";$("preview").style.display="block";fill(d.formats||[]);$("download").disabled=!($("quality").options.length||(d.audio||[]).length);state(tr("found"),100,"ok");$("msg").textContent=tr("ready");setStatus("ready")}catch(e){fail(e.message)}finally{$("check").disabled=false}}
+async function startDownload(){if(!currentUrl)return fail("Сначала проверь видео.");const mediaType=$("type").value;const quality=mediaType==="audio"?"best":$("quality").value;if(mediaType==="video"&&!quality)return fail("Выбери качество.");$("download").disabled=true;$("check").disabled=true;setStatus("creating","busy");state(tr("creating"),70);try{const d=await jsonFetch("/api/download",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url:currentUrl,quality,media_type:mediaType})});const a=document.createElement("a");a.href=d.download_url;a.download=d.filename||"video";a.style.display="none";document.body.appendChild(a);a.click();setTimeout(()=>a.remove(),2000);state(tr("ready"),100,"ok");$("msg").textContent=d.filename||"Download";setStatus("ready")}catch(e){fail(e.message)}finally{$("download").disabled=false;$("check").disabled=false}}
+$("check").onclick=checkVideo;$("download").onclick=startDownload;$("url").addEventListener("keydown",e=>{if(e.key==="Enter")checkVideo});
+$("type").addEventListener("change",()=>{if(!info)return;if($("type").value==="audio"){$("quality").disabled=true;$("quality").innerHTML='<option value="best">MP3</option>';$("download").disabled=!(info.audio||[]).length}else{fill(info.formats||[]);$("download").disabled=!$("quality").options.length}});
 </script>
 </body>
 </html>

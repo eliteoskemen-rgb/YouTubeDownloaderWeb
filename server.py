@@ -87,37 +87,13 @@ def root():
 
 @app.get("/download-app")
 def download_app():
-    try:
-        r = requests.get(
-            "https://cloud-api.yandex.net/v1/disk/public/resources/download",
-            params={"public_key": YANDEX_PUBLIC_EXE},
-            timeout=30,
-        )
-
-        if r.status_code >= 400:
-            raise RuntimeError(
-                f"Yandex Disk API HTTP {r.status_code}: {r.text[:1000]}"
-            )
-
-        data = r.json()
-        href = data.get("href")
-
-        if not href:
-            raise RuntimeError("Яндекс Диск не вернул ссылку на скачивание.")
-
-        return RedirectResponse(
-            url=href,
-            status_code=307,
-            headers={
-                "Cache-Control": "no-store",
-            },
-        )
-
-    except Exception as exc:
-        raise HTTPException(
-            502,
-            f"Не удалось получить ссылку на EXE: {exc}",
-        )
+    # Use the stable public Yandex Disk share page instead of redirecting
+    # through downloader.disk.yandex.ru, which can return ERR_INVALID_RESPONSE.
+    return RedirectResponse(
+        url=YANDEX_PUBLIC_EXE,
+        status_code=302,
+        headers={"Cache-Control": "no-store"},
+    )
 
 @app.get("/health")
 def health():
@@ -126,7 +102,7 @@ def health():
         "engine": "tunelio",
         "key_configured": bool(TUNELIO_KEY),
         "app_available": True,
-        "app_source": "Yandex Disk",
+        "app_source": "Yandex Disk share page",
     }
 
 
