@@ -3,7 +3,6 @@ import json
 import os
 import re
 import shutil
-import tempfile
 import uuid
 from pathlib import Path
 
@@ -14,39 +13,15 @@ from pydantic import BaseModel
 
 
 # =========================================================
-# PATHS
+# CONFIG
 # =========================================================
 
 BASE = Path(__file__).resolve().parent
-
 DOWNLOADS = BASE / "downloads"
 
-# Render Secret File
-COOKIES_SOURCE = Path(
-    "/etc/secrets/www.youtube.com_cookies.txt"
-)
+DOWNLOADS.mkdir(exist_ok=True)
 
-# Writable temporary directory
-TEMP_DIR = Path(tempfile.gettempdir()) / "youtube_downloader"
-
-DOWNLOADS.mkdir(
-    parents=True,
-    exist_ok=True
-)
-
-TEMP_DIR.mkdir(
-    parents=True,
-    exist_ok=True
-)
-
-
-# =========================================================
-# APP
-# =========================================================
-
-app = FastAPI(
-    title="YouTube Downloader Online"
-)
+app = FastAPI(title="YouTube Downloader Online")
 
 app.mount(
     "/static",
@@ -54,17 +29,34 @@ app.mount(
     name="static"
 )
 
-
-# =========================================================
-# STORAGE
-# =========================================================
-
 tasks = {}
 
-URL_RE = re.compile(
-    r"^https?://",
-    re.I
-)
+URL_RE = re.compile(r"^https?://", re.I)
+
+
+# =========================================================
+# YT-DLP
+# =========================================================
+
+# ВАЖНО:
+# Cookies больше НЕ используются.
+# Старый вариант с /etc/secrets/*.txt удалён,
+# потому что Render делает Secret Files read-only,
+# а YouTube может инвалидировать cookies.
+
+YT_BASE_ARGS = [
+    "--js-runtimes",
+    "deno",
+    "--no-playlist",
+]
+
+
+# Дополнительный вариант без cookies.
+# TV-клиент сейчас полезен как fallback для публичных видео.
+YT_FALLBACK_ARGS = [
+    "--extractor-args",
+    "youtube:player_client=tv",
+]
 
 
 # =========================================================
@@ -81,22 +73,19 @@ class Download(Link):
 
 
 # =========================================================
-# BASIC ROUTES
+# HELPERS
 # =========================================================
 
-@app.get("/")
-def index():
-    return FileResponse(
-        BASE / "index.html"
-    )
+def validate_url(url: str):
+    url = url.strip()
 
+    if not URL_RE.match(url):
+        raise HTTPException(400, "Неверная ссылка")
 
-# =========================================================
-# TASK
-# =========================================================
+    return url
+
 
 def safe_task():
-
     tid = uuid.uuid4().hex
 
     tasks[tid] = {
@@ -112,237 +101,34 @@ def safe_task():
     return tid
 
 
-# =========================================================
-# COOKIES
-# =========================================================
-
-def prepare_cookies(tid: str):
-
+async def run_ytdlp(args):
     """
-    Render Secret Files are read-only.
-
-    We therefore copy cookies into /tmp.
-    yt-dlp can work with the writable copy.
+    Запускает yt-dlp и возвращает:
+    returncode, stdout/stderr.
     """
 
-    if not COOKIES_SOURCE.exists():
-        return None
-
-    cookie_file = (
-        TEMP_DIR /
-        f"cookies_{tid}.txt"
+    p = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
 
-    try:
+    out, err = await p.communicate()
 
-        shutil.copyfile(
-            COOKIES_SOURCE,
-            cookie_file
-        )
-
-        return cookie_file
-
-    except Exception as e:
-
-        raise RuntimeError(
-            f"Не удалось подготовить cookies: {e}"
-        )
-
-
-def remove_cookies(cookie_file):
-
-    if not cookie_file:
-        return
-
-    try:
-        cookie_file.unlink(
-            missing_ok=True
-        )
-    except Exception:
-        pass
+    return (
+        p.returncode,
+        out.decode("utf-8", "replace"),
+        err.decode("utf-8", "replace"),
+    )
 
 
 # =========================================================
-# YT-DLP BASE ARGUMENTS
+# INDEX
 # =========================================================
 
-def base_yt_args():
-
-    return [
-        "--js-runtimes",
-        "deno",
-
-        # Keep EJS scripts up to date.
-        "--remote-components",
-        "ejs:github",
-
-        "--no-playlist",
-        "--no-warnings",
-    ]
-
-
-# =========================================================
-# PUBLIC YOUTUBE CLIENTS
-# =========================================================
-
-def public_client_args():
-
-    """
-    Clients that can be useful for public videos.
-
-    yt-dlp itself decides which formats are actually
-    available for the selected client.
-    """
-
-    return [
-        "--extractor-args",
-        (
-            "youtube:"
-            "player_client=android_vr,web_embedded,web_safari"
-        ),
-    ]
-
-
-# =========================================================
-# RUN YT-DLP
-# =========================================================
-
-async def execute_yt_dlp(
-    cmd,
-    timeout=300
-):
-
-    try:
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-
-    except FileNotFoundError as e:
-
-        raise RuntimeError(
-            "yt-dlp или Deno не найден на сервере."
-        ) from e
-
-    output = []
-
-    try:
-
-        while True:
-
-            line = await asyncio.wait_for(
-                process.stdout.readline(),
-                timeout=timeout
-            )
-
-            if not line:
-                break
-
-            text = line.decode(
-                "utf-8",
-                "replace"
-            ).strip()
-
-            if text:
-                output.append(text)
-
-        return_code = await process.wait()
-
-    except asyncio.TimeoutError:
-
-        try:
-            process.kill()
-        except Exception:
-            pass
-
-        await process.wait()
-
-        raise RuntimeError(
-            "YouTube слишком долго не отвечает."
-        )
-
-    text = "\n".join(output)
-
-    return return_code, text
-
-
-# =========================================================
-# ERROR CLEANUP
-# =========================================================
-
-def clean_youtube_error(text):
-
-    text = text.strip()
-
-    if not text:
-        return "YouTube не вернул описание ошибки."
-
-    lower = text.lower()
-
-    if (
-        "sign in to confirm" in lower
-        or "not a bot" in lower
-    ):
-        return (
-            "YouTube требует дополнительную проверку "
-            "для этого запроса. "
-            "Повторная попытка с cookies будет выполнена "
-            "автоматически."
-        )
-
-    if (
-        "cookies are no longer valid" in lower
-        or "cookies have been rotated" in lower
-    ):
-        return (
-            "Cookies YouTube устарели. "
-            "Обнови www.youtube.com_cookies.txt "
-            "в Render → Environment → Secret Files."
-        )
-
-    if (
-        "video unavailable" in lower
-        or "this video is unavailable" in lower
-    ):
-        return (
-            "Видео недоступно для загрузки "
-            "или ограничено владельцем."
-        )
-
-    if "private video" in lower:
-        return "Видео является приватным."
-
-    if "age-restricted" in lower:
-        return (
-            "Видео имеет возрастное ограничение. "
-            "Для него могут потребоваться действующие cookies."
-        )
-
-    if "http error 403" in lower:
-        return (
-            "YouTube отклонил запрос (HTTP 403). "
-            "Попробуйте ещё раз или обновите yt-dlp/cookies."
-        )
-
-    if "http error 429" in lower:
-        return (
-            "YouTube временно ограничил количество запросов."
-        )
-
-    # Return only the useful tail.
-    lines = text.splitlines()
-
-    useful = [
-        line
-        for line in lines
-        if line.strip()
-    ]
-
-    return "\n".join(
-        useful[-8:]
-    )[:2500]
+@app.get("/")
+def index():
+    return FileResponse(BASE / "index.html")
 
 
 # =========================================================
@@ -352,133 +138,80 @@ def clean_youtube_error(text):
 @app.post("/api/info")
 async def info(x: Link):
 
-    url = x.url.strip()
+    url = validate_url(x.url)
 
-    if not URL_RE.match(url):
+    # -----------------------------------------------------
+    # Попытка №1
+    # Обычный yt-dlp без cookies
+    # -----------------------------------------------------
+
+    cmd = [
+        "yt-dlp",
+        *YT_BASE_ARGS,
+        "--dump-single-json",
+        "--skip-download",
+        "--no-warnings",
+        url,
+    ]
+
+    rc, out, err = await run_ytdlp(cmd)
+
+    # -----------------------------------------------------
+    # Попытка №2
+    # TV client
+    # -----------------------------------------------------
+
+    if rc != 0:
+
+        cmd = [
+            "yt-dlp",
+            *YT_BASE_ARGS,
+            *YT_FALLBACK_ARGS,
+            "--dump-single-json",
+            "--skip-download",
+            "--no-warnings",
+            url,
+        ]
+
+        rc, out, err = await run_ytdlp(cmd)
+
+    # -----------------------------------------------------
+    # Ошибка
+    # -----------------------------------------------------
+
+    if rc != 0:
+
+        error_text = (err or out).strip()
+
         raise HTTPException(
             400,
-            "Неверная ссылка"
+            error_text[-2500:] or "Не удалось получить информацию о видео"
         )
 
-    temp_id = uuid.uuid4().hex
-
-    cookie_file = None
-
     # -----------------------------------------------------
-    # ATTEMPT 1
-    # Without cookies
-    # -----------------------------------------------------
-
-    attempts = []
-
-    attempts.append(
-        (
-            "public",
-            base_yt_args()
-            + public_client_args()
-        )
-    )
-
-    # -----------------------------------------------------
-    # ATTEMPT 2
-    # With cookies
+    # JSON
     # -----------------------------------------------------
 
     try:
-
-        cookie_file = prepare_cookies(
-            temp_id
-        )
-
-        if cookie_file:
-
-            attempts.append(
-                (
-                    "cookies",
-                    base_yt_args()
-                    + [
-                        "--cookies",
-                        str(cookie_file),
-                    ]
-                )
-            )
-
-        last_error = ""
-
-        for mode, args in attempts:
-
-            cmd = [
-                "yt-dlp",
-                *args,
-
-                "--dump-single-json",
-                "--skip-download",
-
-                url,
-            ]
-
-            return_code, output = (
-                await execute_yt_dlp(
-                    cmd,
-                    timeout=120
-                )
-            )
-
-            if return_code == 0:
-
-                try:
-
-                    data = json.loads(
-                        output
-                    )
-
-                except Exception:
-
-                    raise HTTPException(
-                        500,
-                        "YouTube вернул неожиданный ответ."
-                    )
-
-                return {
-                    "title": data.get(
-                        "title",
-                        "Видео"
-                    ),
-
-                    "uploader": (
-                        data.get("uploader")
-                        or data.get("channel")
-                        or ""
-                    ),
-
-                    "duration": data.get(
-                        "duration"
-                    ),
-
-                    "height": data.get(
-                        "height"
-                    ),
-
-                    "thumbnail": data.get(
-                        "thumbnail",
-                        ""
-                    ),
-                }
-
-            last_error = output
+        data = json.loads(out)
+    except Exception:
 
         raise HTTPException(
-            400,
-            clean_youtube_error(
-                last_error
-            )
+            500,
+            "yt-dlp вернул некорректные данные"
         )
 
-    finally:
-
-        remove_cookies(
-            cookie_file
-        )
+    return {
+        "title": data.get("title") or "Видео",
+        "uploader": (
+            data.get("uploader")
+            or data.get("channel")
+            or ""
+        ),
+        "duration": data.get("duration"),
+        "height": data.get("height"),
+        "thumbnail": data.get("thumbnail") or "",
+    }
 
 
 # =========================================================
@@ -488,13 +221,7 @@ async def info(x: Link):
 @app.post("/api/download")
 async def download(x: Download):
 
-    url = x.url.strip()
-
-    if not URL_RE.match(url):
-        raise HTTPException(
-            400,
-            "Неверная ссылка"
-        )
+    url = validate_url(x.url)
 
     tid = safe_task()
 
@@ -514,28 +241,14 @@ async def download(x: Download):
 # DOWNLOAD
 # =========================================================
 
-async def run_download(
-    tid,
-    x
-):
+async def run_download(tid, x):
 
     t = tasks[tid]
 
-    work = (
-        DOWNLOADS /
-        tid
-    )
-
-    work.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    cookie_file = None
+    work = DOWNLOADS / tid
+    work.mkdir(parents=True, exist_ok=True)
 
     try:
-
-        t["status"] = "starting"
 
         # -------------------------------------------------
         # FORMAT
@@ -546,12 +259,9 @@ async def run_download(
             fmt = [
                 "-f",
                 "bestaudio/best",
-
                 "-x",
-
                 "--audio-format",
                 "mp3",
-
                 "--audio-quality",
                 "192K",
             ]
@@ -562,11 +272,7 @@ async def run_download(
 
                 fmt = [
                     "-f",
-                    (
-                        "bestvideo+bestaudio/"
-                        "best"
-                    ),
-
+                    "bestvideo+bestaudio/best",
                     "--merge-output-format",
                     "mp4",
                 ]
@@ -574,9 +280,7 @@ async def run_download(
             else:
 
                 try:
-                    height = int(
-                        x.quality
-                    )
+                    height = int(x.quality)
                 except Exception:
                     height = 720
 
@@ -584,100 +288,152 @@ async def run_download(
                     "-f",
                     (
                         f"bestvideo[height<={height}]"
-                        "+bestaudio/"
+                        f"+bestaudio/"
                         f"best[height<={height}]/"
-                        "best"
+                        f"best"
                     ),
-
                     "--merge-output-format",
                     "mp4",
                 ]
 
         # -------------------------------------------------
+        # FFMPEG
+        # -------------------------------------------------
+
+        ffmpeg = shutil.which("ffmpeg")
+
+        # -------------------------------------------------
         # OUTPUT
         # -------------------------------------------------
 
-        output_template = str(
-            work /
-            "%(title)s.%(ext)s"
-        )
-
-        ffmpeg = shutil.which(
-            "ffmpeg"
+        output = str(
+            work / "%(title)s.%(ext)s"
         )
 
         # -------------------------------------------------
-        # BUILD ATTEMPTS
+        # MAIN COMMAND
         # -------------------------------------------------
 
-        attempts = []
+        cmd = [
+            "yt-dlp",
 
-        # ATTEMPT 1:
-        # public video, without account cookies
+            *YT_BASE_ARGS,
 
-        attempts.append(
-            (
-                "public",
-                base_yt_args()
-                + public_client_args()
-            )
+            "--newline",
+            "--progress",
+
+            *fmt,
+
+            "-o",
+            output,
+
+            x.url,
+        ]
+
+        if ffmpeg:
+            cmd.extend([
+                "--ffmpeg-location",
+                ffmpeg,
+            ])
+
+        # -------------------------------------------------
+        # RUN
+        # -------------------------------------------------
+
+        p = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
         )
 
-        # ATTEMPT 2:
-        # cookies
+        while True:
 
-        cookie_file = prepare_cookies(
-            tid
-        )
+            line = await p.stdout.readline()
 
-        if cookie_file:
+            if not line:
+                break
 
-            attempts.append(
-                (
-                    "cookies",
-                    base_yt_args()
-                    + [
-                        "--cookies",
-                        str(cookie_file),
-                    ]
-                )
-            )
+            s = line.decode(
+                "utf-8",
+                "replace"
+            ).strip()
 
-        last_output = ""
+            # ---------------------------------------------
+            # PROGRESS
+            # ---------------------------------------------
 
-        # -------------------------------------------------
-        # TRY
-        # -------------------------------------------------
-
-        for attempt_number, (
-            attempt_name,
-            yt_args_list
-        ) in enumerate(
-            attempts,
-            start=1
-        ):
-
-            t["status"] = (
-                "downloading"
-                if attempt_number == 1
-                else "retrying"
+            m = re.search(
+                r"\[download\]\s+([\d.]+)%.*?at\s+(.+?)\s+ETA\s+(.+)",
+                s
             )
 
-            # Clean old partial files.
-            for old_file in work.iterdir():
+            if m:
 
                 try:
-
-                    if old_file.is_file():
-                        old_file.unlink()
-
+                    t["percent"] = float(
+                        m.group(1)
+                    )
                 except Exception:
                     pass
 
-            cmd = [
+                t["speed"] = m.group(2)
+                t["eta"] = m.group(3)
+
+            # ---------------------------------------------
+            # FILENAME
+            # ---------------------------------------------
+
+            if "Destination:" in s:
+
+                filename = s.split(
+                    "Destination:",
+                    1
+                )[-1].strip()
+
+                t["filename"] = Path(
+                    filename
+                ).name
+
+            # ---------------------------------------------
+            # PROCESSING
+            # ---------------------------------------------
+
+            if (
+                "[Merger]" in s
+                or "[ExtractAudio]" in s
+                or "Merging formats" in s
+            ):
+
+                t["status"] = "processing"
+
+        rc = await p.wait()
+
+        # -------------------------------------------------
+        # FIRST ATTEMPT FAILED
+        # -------------------------------------------------
+
+        if rc != 0:
+
+            # Удаляем результаты неудачной попытки
+
+            for f in work.iterdir():
+
+                if f.is_file():
+
+                    try:
+                        f.unlink()
+                    except Exception:
+                        pass
+
+            # ------------------------------------------------
+            # FALLBACK: TV CLIENT
+            # ------------------------------------------------
+
+            fallback_cmd = [
                 "yt-dlp",
 
-                *yt_args_list,
+                *YT_BASE_ARGS,
+                *YT_FALLBACK_ARGS,
 
                 "--newline",
                 "--progress",
@@ -685,45 +441,31 @@ async def run_download(
                 *fmt,
 
                 "-o",
-                output_template,
+                output,
 
                 x.url,
             ]
 
             if ffmpeg:
-
-                cmd.extend([
+                fallback_cmd.extend([
                     "--ffmpeg-location",
                     ffmpeg,
                 ])
 
-            # -------------------------------------------------
-            # START
-            # -------------------------------------------------
+            t["status"] = "retrying"
+            t["percent"] = 0
+            t["speed"] = ""
+            t["eta"] = ""
 
-            try:
-
-                process = (
-                    await asyncio.create_subprocess_exec(
-                        *cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,
-                    )
-                )
-
-            except FileNotFoundError:
-
-                raise RuntimeError(
-                    "yt-dlp не найден."
-                )
-
-            output_lines = []
+            p = await asyncio.create_subprocess_exec(
+                *fallback_cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
 
             while True:
 
-                line = (
-                    await process.stdout.readline()
-                )
+                line = await p.stdout.readline()
 
                 if not line:
                     break
@@ -733,136 +475,92 @@ async def run_download(
                     "replace"
                 ).strip()
 
-                if not s:
-                    continue
-
-                output_lines.append(s)
-
-                # ---------------------------------------------
-                # PROGRESS
-                # ---------------------------------------------
-
                 m = re.search(
-                    r"\[download\]\s+"
-                    r"([\d.]+)%"
-                    r".*?"
-                    r"at\s+(.+?)"
-                    r"\s+ETA\s+(.+)",
+                    r"\[download\]\s+([\d.]+)%.*?at\s+(.+?)\s+ETA\s+(.+)",
                     s
                 )
 
                 if m:
 
                     try:
-
                         t["percent"] = float(
                             m.group(1)
                         )
-
                     except Exception:
                         pass
 
                     t["speed"] = m.group(2)
                     t["eta"] = m.group(3)
 
-                # ---------------------------------------------
-                # FILENAME
-                # ---------------------------------------------
+                if "Destination:" in s:
 
-                if (
-                    "[download]" in s
-                    and "%" in s
-                ):
+                    filename = s.split(
+                        "Destination:",
+                        1
+                    )[-1].strip()
 
-                    t["filename"] = (
-                        s.split("]")[-1].strip()
-                    )
-
-                # ---------------------------------------------
-                # PROCESSING
-                # ---------------------------------------------
+                    t["filename"] = Path(
+                        filename
+                    ).name
 
                 if (
                     "[Merger]" in s
                     or "[ExtractAudio]" in s
-                    or "Destination:" in s
+                    or "Merging formats" in s
                 ):
 
                     t["status"] = "processing"
 
-            rc = await process.wait()
+            rc = await p.wait()
 
-            last_output = "\n".join(
-                output_lines
+        # -------------------------------------------------
+        # FINAL ERROR
+        # -------------------------------------------------
+
+        if rc != 0:
+
+            raise RuntimeError(
+                "YouTube не разрешил загрузку "
+                "этого видео через доступные клиенты."
             )
 
-            # -------------------------------------------------
-            # SUCCESS
-            # -------------------------------------------------
+        # -------------------------------------------------
+        # FIND FILE
+        # -------------------------------------------------
 
-            if rc == 0:
+        candidates = [
+            p for p in work.iterdir()
+            if p.is_file()
+        ]
 
-                candidates = [
-                    p
-                    for p in work.iterdir()
-                    if p.is_file()
-                    and not p.name.endswith(".part")
-                    and not p.name.endswith(".ytdl")
-                ]
+        if not candidates:
 
-                if candidates:
-
-                    f = max(
-                        candidates,
-                        key=lambda p:
-                        p.stat().st_mtime
-                    )
-
-                    t.update(
-                        status="done",
-                        percent=100,
-                        filename=f.name,
-                        file=str(f),
-                        error="",
-                    )
-
-                    return
-
-            # -------------------------------------------------
-            # FIRST ATTEMPT FAILED
-            # -------------------------------------------------
-
-            # If the public attempt failed,
-            # automatically try cookies.
-
-            if attempt_number < len(attempts):
-
-                continue
-
-            break
-
-        # -----------------------------------------------------
-        # ALL ATTEMPTS FAILED
-        # -----------------------------------------------------
-
-        raise RuntimeError(
-            clean_youtube_error(
-                last_output
+            raise RuntimeError(
+                "Файл не найден после загрузки."
             )
+
+        f = max(
+            candidates,
+            key=lambda p: p.stat().st_mtime
         )
+
+        # -------------------------------------------------
+        # DONE
+        # -------------------------------------------------
+
+        t.update({
+            "status": "done",
+            "percent": 100,
+            "filename": f.name,
+            "file": str(f),
+        })
 
     except Exception as e:
 
-        t.update(
-            status="error",
-            error=str(e),
-        )
-
-    finally:
-
-        remove_cookies(
-            cookie_file
-        )
+        t.update({
+            "status": "error",
+            "error": str(e),
+        })
 
 
 # =========================================================
@@ -902,9 +600,7 @@ def file(tid: str):
             "Файл ещё не готов"
         )
 
-    f = Path(
-        t["file"]
-    )
+    f = Path(t["file"])
 
     if not f.exists():
 
@@ -916,7 +612,7 @@ def file(tid: str):
     return FileResponse(
         f,
         filename=f.name,
-        media_type="application/octet-stream",
+        media_type="application/octet-stream"
     )
 
 
@@ -924,4 +620,5 @@ def file(tid: str):
 # PRODUCTION
 # =========================================================
 
+# Render:
 # uvicorn server:app --host 0.0.0.0 --port 8000
