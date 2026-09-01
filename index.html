@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>YouTube Downloader — Online</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="ambient a"></div><div class="ambient b"></div>
+<main class="app">
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-icon">▶</div>
+      <div><div class="brand-title">YouTube Downloader</div><div class="brand-subtitle">Быстро. Красиво. Без лишних действий.</div></div>
+    </div>
+    <div class="header-actions">
+      <div class="status-pill"><span class="dot"></span><span id="connection">Готов</span></div>
+    </div>
+  </header>
+
+  <section class="hero">
+    <div class="hero-copy">
+      <div class="eyebrow">ONLINE VIDEO DOWNLOADER</div>
+      <h1>Скачивай видео<br><span>в один клик.</span></h1>
+      <p>Вставь ссылку, выбери качество и нажми скачать.</p>
+      <div class="mini-features"><span>4K</span><span>2K</span><span>MP4</span><span>MP3</span><span>ONLINE</span></div>
+    </div>
+
+    <div class="download-card glass">
+      <label class="label">Ссылка на видео</label>
+      <div class="url-row">
+        <input id="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=...">
+        <button class="icon-btn" id="pasteBtn" title="Вставить">↘</button>
+      </div>
+
+      <div id="preview" class="preview hidden">
+        <div class="thumb-wrap"><img id="thumb" alt=""><div class="thumb-badge" id="thumbQuality">Video</div></div>
+        <div class="preview-info"><div id="videoTitle" class="video-title">Видео</div><div id="videoMeta" class="video-meta">—</div></div>
+      </div>
+
+      <div class="controls">
+        <div><label class="label">Качество</label>
+          <select id="quality">
+            <option value="best">Лучшее доступное</option>
+            <option value="2160">4K · 2160p</option>
+            <option value="1440">2K · 1440p</option>
+            <option value="1080">1080p</option>
+            <option value="720">720p</option>
+            <option value="480">480p</option>
+            <option value="360">360p</option>
+          </select>
+        </div>
+        <div><label class="label">Тип</label>
+          <select id="mode"><option value="video">Видео MP4</option><option value="audio">Только MP3</option></select>
+        </div>
+      </div>
+
+      <button id="downloadBtn" class="download-btn"><span class="btn-shine"></span><span class="btn-icon">↓</span>Скачать</button>
+
+      <div id="progressBox" class="progress-box hidden">
+        <div class="progress-top"><span id="progressStatus">Скачивание…</span><strong id="percent">0%</strong></div>
+        <div class="progress-track"><div id="progressBar"></div></div>
+        <div class="progress-bottom"><span id="filename">—</span><span><span id="speed">—</span> · ETA <span id="eta">--:--</span></span></div>
+      </div>
+      <div id="message" class="message"></div>
+    </div>
+  </section>
+  <footer>© 2026 YouTube Downloader · Online</footer>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
