@@ -40,28 +40,28 @@ footer{text-align:center;padding:15px;color:#565f74;font-size:10px}
 <body>
 <div class="wrap">
 <header>
-  <div class="brand"><div class="logo">▶</div><div><h1>YouTube Downloader</h1><p>Быстро. Красиво. Без лишних действий.</p></div></div>
+  <div class="brand"><div class="logo">▶</div><div><h1 data-i18n="brand">YouTube Downloader</h1><p data-i18n="brand_sub">Быстро. Красиво. Без лишних действий.</p></div></div>
   <div class="status" id="status">● Онлайн</div>
 </header>
 
 <main>
 <section>
-  <div class="kicker">ONLINE VIDEO DOWNLOADER</div>
-  <h2>Скачивай<br>видео<br><span class="grad">в один клик.</span></h2>
+  <div class="kicker" data-i18n="kicker">ONLINE VIDEO DOWNLOADER</div>
+  <h2>Скачивай<br>видео<br><span class="grad" data-i18n="hero">в один клик.</span></h2>
   <p class="lead">Вставь ссылку на YouTube и бесплатно скачай видео до 720p. Для 4K и других высоких качеств используй Windows-программу.</p>
   <div class="badges"><span class="badge">720P FREE</span><span class="badge">MP4</span><span class="badge">MP3</span><span class="badge">1080P</span><span class="badge">4K → APP</span><span class="badge">ONLINE</span></div>
 </section>
 
 <section class="card">
-  <label>Ссылка на YouTube</label>
+  <label data-i18n="url_label">Ссылка на YouTube</label>
   <div class="row">
     <input id="url" placeholder="https://youtube.com/watch?v=..." autocomplete="off">
     <button class="btn" id="check">↘</button>
   </div>
 
   <div class="grid">
-    <div><label>Качество</label><select id="quality" disabled><option>Проверь видео</option></select></div>
-    <div><label>Формат</label><select id="type"><option value="video">Видео MP4</option><option value="audio">Аудио MP3</option></select></div>
+    <div><label data-i18n="quality_label">Качество</label><select id="quality" disabled><option>Проверь видео</option></select></div>
+    <div><label data-i18n="format_label">Формат</label><select id="type"><option value="video" data-i18n="video_option">Видео MP4</option><option value="audio" data-i18n="audio_option">Аудио MP3</option></select></div>
   </div>
 
   <div class="preview" id="preview">
@@ -69,7 +69,7 @@ footer{text-align:center;padding:15px;color:#565f74;font-size:10px}
     <div class="meta"><div class="title" id="title"></div><div class="sub" id="sub"></div></div>
   </div>
 
-  <button class="download" id="download" disabled>↓ Скачать</button>
+  <button class="download" id="download" disabled data-i18n="download_btn">↓ Скачать</button>
 
   <div class="progress">
     <div class="top"><span id="ptext">Ожидаю ссылку...</span><span id="pct">0%</span></div>
@@ -79,14 +79,14 @@ footer{text-align:center;padding:15px;color:#565f74;font-size:10px}
   </div>
 
   <div style="margin-top:14px;padding:16px;border:1px solid rgba(117,92,255,.35);border-radius:16px;background:linear-gradient(135deg,rgba(117,92,255,.10),rgba(43,188,255,.06))">
-      <div style="font-size:12px;font-weight:800;margin-bottom:5px">Нужно 4K?</div>
-      <div style="font-size:11px;color:#aeb5c6;line-height:1.5;margin-bottom:12px">На сайте бесплатно скачивание до 720p. Для 4K и других высоких качеств используй Windows-программу.</div>
-      <a href="/download-app" download="YouTubeDownloader-Setup.exe" style="display:block;text-align:center;text-decoration:none;color:#fff;border-radius:11px;padding:11px 12px;background:linear-gradient(100deg,#755cff,#2bbcff);font-size:12px;font-weight:800">↓ Скачать YouTube Downloader для Windows</a>
+      <div style="font-size:12px;font-weight:800;margin-bottom:5px"><span data-i18n="need4k">Нужно 4K?</span></div>
+      <div style="font-size:11px;color:#aeb5c6;line-height:1.5;margin-bottom:12px"><span data-i18n="app_desc">На сайте бесплатно скачивание до 720p. Для 4K и других высоких качеств используй Windows-программу.</span></div>
+      <a href="/download-app" download="YouTubeDownloader-Setup.exe" style="display:block;text-align:center;text-decoration:none;color:#fff;border-radius:11px;padding:11px 12px;background:linear-gradient(100deg,#755cff,#2bbcff);font-size:12px;font-weight:800"><span data-i18n="app_btn">↓ Скачать YouTube Downloader для Windows</span></a>
     </div>
-    <div class="note">Бесплатно на сайте: 144p–720p + MP3. Высокие качества — в Windows-программе.</div>
+    <div class="note"><span data-i18n="free_note">Бесплатно на сайте: 144p–720p + MP3. Высокие качества — в Windows-программе.</span></div>
 </section>
 </main>
-<footer>© 2026 YouTube Downloader · Powered by Tunelio</footer>
+<footer>© 2026 YouTube Downloader</footer>
 </div>
 
 <script>
@@ -139,6 +139,105 @@ async function download(){
 $("check").onclick=check;$("download").onclick=download;
 $("url").addEventListener("keydown",e=>{if(e.key==="Enter")check();});
 $("type").addEventListener("change",()=>{if(!info)return;if($("type").value==="audio"){$("quality").disabled=true;$("quality").innerHTML='<option value="mp3">MP3</option>';$("download").disabled=!info.audioFormat;}else{fill(info.formats);$("download").disabled=!(info.formats?.length);}});
+
+const I18N={
+ru:{
+ brand:"YouTube Downloader",
+ brand_sub:"Быстро. Красиво. Без лишних действий.",
+ kicker:"ONLINE VIDEO DOWNLOADER",
+ hero:"в один клик.",
+ app_desc:"На сайте бесплатно скачивание до 720p. Для 4K и других высоких качеств используй Windows-программу.",
+ url_label:"Ссылка на YouTube",
+ quality_label:"Качество",
+ format_label:"Формат",
+ video_option:"Видео MP4",
+ audio_option:"Аудио MP3",
+ download_btn:"↓ Скачать",
+ need4k:"Нужно 4K?",
+ free_note:"Бесплатно на сайте: 144p–720p + MP3. Высокие качества — в Windows-программе.",
+ app_btn:"↓ Скачать YouTube Downloader для Windows",
+ check_video:"Проверь видео",
+ online:"● Онлайн",
+ checking:"● Проверяю...",
+ getting:"Получаю данные...",
+ found:"Видео найдено",
+ ready:"● Готово",
+ choose:"Выбери качество и нажми «Скачать».",
+ creating:"● Создаю ссылку...",
+ preparing:"Готовлю файл...",
+ file_ready:"Файл можно скачать напрямую с Tunelio.",
+ error:"● Ошибка"
+},
+kk:{
+ brand:"YouTube Downloader",
+ brand_sub:"Жылдам. Әдемі. Артық әрекетсіз.",
+ kicker:"ONLINE VIDEO DOWNLOADER",
+ hero:"бір басуда.",
+ app_desc:"Сайтта 720p-ге дейін тегін жүктеу. 4K және жоғары сапалар үшін Windows бағдарламасын пайдаланыңыз.",
+ url_label:"YouTube сілтемесі",
+ quality_label:"Сапа",
+ format_label:"Пішім",
+ video_option:"Видео MP4",
+ audio_option:"Аудио MP3",
+ download_btn:"↓ Жүктеу",
+ need4k:"4K керек пе?",
+ free_note:"Сайтта тегін: 144p–720p + MP3. Жоғары сапалар — Windows бағдарламасында.",
+ app_btn:"↓ YouTube Downloader Windows бағдарламасын жүктеу",
+ check_video:"Видеоны тексеріңіз",
+ online:"● Онлайн",
+ checking:"● Тексерілуде...",
+ getting:"Ақпарат алынуда...",
+ found:"Видео табылды",
+ ready:"● Дайын",
+ choose:"Сапаны таңдап, «Жүктеу» түймесін басыңыз.",
+ creating:"● Сілтеме жасалуда...",
+ preparing:"Файл дайындалуда...",
+ file_ready:"Файлды Tunelio арқылы жүктеуге болады.",
+ error:"● Қате"
+},
+en:{
+ brand:"YouTube Downloader",
+ brand_sub:"Fast. Clean. No unnecessary steps.",
+ kicker:"ONLINE VIDEO DOWNLOADER",
+ hero:"in one click.",
+ app_desc:"Free downloads up to 720p on the website. Use the Windows app for 4K and higher qualities.",
+ url_label:"YouTube link",
+ quality_label:"Quality",
+ format_label:"Format",
+ video_option:"Video MP4",
+ audio_option:"Audio MP3",
+ download_btn:"↓ Download",
+ need4k:"Need 4K?",
+ free_note:"Free on the website: 144p–720p + MP3. Higher qualities are available in the Windows app.",
+ app_btn:"↓ Download YouTube Downloader for Windows",
+ check_video:"Check video",
+ online:"● Online",
+ checking:"● Checking...",
+ getting:"Getting information...",
+ found:"Video found",
+ ready:"● Ready",
+ choose:"Choose quality and click «Download».",
+ creating:"● Creating link...",
+ preparing:"Preparing file...",
+ file_ready:"File can be downloaded directly via Tunelio.",
+ error:"● Error"
+}};
+
+let currentLang=localStorage.getItem("siteLang")||"ru";
+function tr(k){return (I18N[currentLang]&&I18N[currentLang][k])||I18N.ru[k]||k}
+function applyLang(lang){
+ currentLang=I18N[lang]?lang:"ru";
+ localStorage.setItem("siteLang",currentLang);
+ document.documentElement.lang=currentLang==="kk"?"kk":currentLang;
+ document.querySelectorAll("[data-i18n]").forEach(el=>{
+   const key=el.dataset.i18n;
+   if(I18N[currentLang][key]) el.textContent=I18N[currentLang][key];
+ });
+ document.querySelectorAll(".lang-btn").forEach(b=>b.classList.toggle("active",b.dataset.lang===currentLang));
+}
+document.querySelectorAll(".lang-btn").forEach(b=>b.addEventListener("click",()=>applyLang(b.dataset.lang)));
+applyLang(currentLang);
+
 </script>
 </body>
 </html>

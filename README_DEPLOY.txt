@@ -1,19 +1,25 @@
-YouTube Downloader — Tunelio / 720p free / 4K Windows app
+YouTube Downloader — Tunelio web 720p + Windows app for 4K
 
-1) Put YouTubeDownloader-Setup.exe into the repository root, next to server.py and Dockerfile.
-2) In Render Environment add:
-   TUNELIO_KEY = your Tunelio API key
-3) Docker:
-   Dockerfile Path: ./Dockerfile
-   Docker Build Context: .
-   Docker Command: empty
-   Health Check Path: /health
-4) Push:
-   git add .
-   git commit -m "Tunelio 720p free plus Windows 4K app"
-   git push origin main
+Files:
+- server.py
+- index.html
+- requirements.txt
+- Dockerfile
+
+The Windows installer is NOT stored in GitHub.
+The website button /download-app resolves the public Yandex Disk link:
+https://disk.yandex.kz/d/CnupjPQlRoDulg
+
+Render:
+- Runtime: Docker
+- Dockerfile Path: ./Dockerfile
+- Docker Build Context: .
+- Docker Command: empty
+- Health Check Path: /health
+- Environment:
+    TUNELIO_KEY = your Tunelio key
 
 Website:
-- free 144p–720p + MP3
-- all qualities above 720p are intentionally blocked on the web endpoint
-- /download-app downloads YouTubeDownloader-Setup.exe
+- 144p–720p + MP3 through Tunelio
+- 4K/high quality → Windows application download
+- UI languages: Russian, Kazakh, English

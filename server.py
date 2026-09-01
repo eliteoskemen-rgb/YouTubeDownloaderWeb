@@ -4,12 +4,13 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent
 TUNELIO_BASE = "https://tunelio.dev"
 TUNELIO_KEY = os.getenv("TUNELIO_KEY", "").strip()
+YANDEX_PUBLIC_EXE = "https://disk.yandex.kz/d/CnupjPQlRoDulg"
 APP_EXE = BASE_DIR / "YouTubeDownloader-Setup.exe"
 
 app = FastAPI(title="YouTube Downloader")
@@ -86,22 +87,37 @@ def root():
 
 @app.get("/download-app")
 def download_app():
-    if not APP_EXE.exists():
-        raise HTTPException(
-            404,
-            "YouTubeDownloader-Setup.exe не найден в корне проекта."
+    try:
+        r = requests.get(
+            "https://cloud-api.yandex.net/v1/disk/public/resources/download",
+            params={"public_key": YANDEX_PUBLIC_EXE},
+            timeout=30,
         )
 
-    return FileResponse(
-        APP_EXE,
-        media_type="application/vnd.microsoft.portable-executable",
-        filename=APP_EXE.name,
-        headers={
-            "Content-Disposition": f'attachment; filename="{APP_EXE.name}"',
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+        if r.status_code >= 400:
+            raise RuntimeError(
+                f"Yandex Disk API HTTP {r.status_code}: {r.text[:1000]}"
+            )
+
+        data = r.json()
+        href = data.get("href")
+
+        if not href:
+            raise RuntimeError("Яндекс Диск не вернул ссылку на скачивание.")
+
+        return RedirectResponse(
+            url=href,
+            status_code=307,
+            headers={
+                "Cache-Control": "no-store",
+            },
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            502,
+            f"Не удалось получить ссылку на EXE: {exc}",
+        )
 
 @app.get("/health")
 def health():
@@ -109,7 +125,8 @@ def health():
         "status": "ok",
         "engine": "tunelio",
         "key_configured": bool(TUNELIO_KEY),
-        "app_available": APP_EXE.exists(),
+        "app_available": True,
+        "app_source": "Yandex Disk",
     }
 
 
