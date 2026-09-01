@@ -2,15 +2,13 @@ import asyncio
 import json
 import os
 import re
-import shutil
 import subprocess
-import tempfile
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 
@@ -18,7 +16,7 @@ app = FastAPI(title="YouTube Downloader")
 
 BASE_DIR = Path(__file__).resolve().parent
 DOWNLOAD_DIR = BASE_DIR / "downloads"
-DOWNLOAD_DIR.mkdir(exist_ok=True)
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 POT_PROVIDER_URL = os.getenv(
     "POT_PROVIDER_URL",
@@ -41,11 +39,12 @@ class DownloadRequest(BaseModel):
 def extract_video_id(url: str):
     try:
         parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
 
-        if parsed.hostname in ("youtu.be", "www.youtu.be"):
+        if host in ("youtu.be", "www.youtu.be"):
             return parsed.path.strip("/").split("/")[0]
 
-        if parsed.hostname and "youtube.com" in parsed.hostname:
+        if "youtube.com" in host:
             query = parse_qs(parsed.query)
 
             if "v" in query:
@@ -65,13 +64,10 @@ def extract_video_id(url: str):
 
     match = re.search(
         r"(?:v=|youtu\.be/|shorts/|embed/|live/)([A-Za-z0-9_-]{6,})",
-        url
+        url,
     )
 
-    if match:
-        return match.group(1)
-
-    return None
+    return match.group(1) if match else None
 
 
 def normalize_youtube_url(url: str):
@@ -94,15 +90,18 @@ def yt_dlp_base_args():
         "--no-playlist",
         "--ignore-config",
 
-        # JavaScript/EJS support
+        # JS runtime
         "--js-runtimes",
         "node",
 
-        # Automatically use our PO token provider
+        # PO Token provider
+        "--extractor-args",
+        f"youtubepot-bgutilhttp:base_url={POT_PROVIDER_URL}",
+
+        # YouTube clients
         "--extractor-args",
         "youtube:player-client=mweb,web_embedded,tv",
 
-        # Don't use account cookies
         "--no-check-certificates",
     ]
 
@@ -133,10 +132,66 @@ def metadata_from_yt_dlp(url: str):
 
     if result.returncode != 0:
         raise RuntimeError(
-            result.stderr[-5000:] or "yt-dlp metadata error"
+            result.stderr[-5000:]
+            or "yt-dlp metadata error"
         )
 
     return json.loads(result.stdout)
+
+
+def job_dir(job_id: str):
+    path = DOWNLOAD_DIR / job_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def job_file(job_id: str):
+    return job_dir(job_id) / "job.json"
+
+
+def save_job(job_id: str):
+    path = job_file(job_id)
+
+    temp = path.with_suffix(".tmp")
+
+    temp.write_text(
+        json.dumps(
+            jobs[job_id],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    temp.replace(path)
+
+
+def load_job(job_id: str):
+    if job_id in jobs:
+        return jobs[job_id]
+
+    path = job_file(job_id)
+
+    if not path.exists():
+        return None
+
+    try:
+        data = json.loads(
+            path.read_text(encoding="utf-8")
+        )
+        jobs[job_id] = data
+        return data
+    except Exception:
+        return None
+
+
+def update_job(job_id: str, **values):
+    job = load_job(job_id)
+
+    if not job:
+        return
+
+    job.update(values)
+    save_job(job_id)
 
 
 @app.get("/")
@@ -167,7 +222,6 @@ async def get_info(request: InfoRequest):
         url = normalize_youtube_url(request.url)
         video_id = extract_video_id(url)
 
-        # First get information through yt-dlp
         try:
             data = await asyncio.to_thread(
                 metadata_from_yt_dlp,
@@ -189,7 +243,6 @@ async def get_info(request: InfoRequest):
             }
 
         except Exception:
-            # Thumbnail still works even if YouTube blocks yt-dlp
             return {
                 "success": True,
                 "id": video_id,
@@ -205,30 +258,25 @@ async def get_info(request: InfoRequest):
     except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail=str(e)
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
+            detail=str(e),
         )
 
 
 def download_video(job_id, url, quality, media_type):
-    job = jobs[job_id]
+    update_job(
+        job_id,
+        status="downloading",
+        progress=0,
+        message="Связываюсь с YouTube...",
+    )
 
-    job["status"] = "downloading"
-    job["progress"] = 0
-    job["message"] = "Подготавливаю загрузку..."
+    temp_dir = job_dir(job_id)
 
-    temp_dir = DOWNLOAD_DIR / job_id
-    temp_dir.mkdir(parents=True, exist_ok=True)
+    output_template = str(
+        temp_dir / "%(title).120s.%(ext)s"
+    )
 
     if media_type == "audio":
-        output_template = str(
-            temp_dir / "%(title).120s.%(ext)s"
-        )
 
         args = [
             "-f",
@@ -244,9 +292,6 @@ def download_video(job_id, url, quality, media_type):
         ]
 
     else:
-        output_template = str(
-            temp_dir / "%(title).120s.%(ext)s"
-        )
 
         if quality == "1080p":
             fmt = (
@@ -267,10 +312,7 @@ def download_video(job_id, url, quality, media_type):
             )
 
         else:
-            fmt = (
-                "bestvideo+bestaudio/"
-                "best"
-            )
+            fmt = "bestvideo+bestaudio/best"
 
         args = [
             "-f",
@@ -285,7 +327,6 @@ def download_video(job_id, url, quality, media_type):
         ]
 
     try:
-        job["message"] = "Связываюсь с YouTube..."
 
         result = run_yt_dlp(
             args,
@@ -299,8 +340,11 @@ def download_video(job_id, url, quality, media_type):
             )
 
         files = [
-            p for p in temp_dir.iterdir()
+            p
+            for p in temp_dir.iterdir()
             if p.is_file()
+            and p.name != "job.json"
+            and not p.name.endswith(".tmp")
         ]
 
         if not files:
@@ -310,28 +354,38 @@ def download_video(job_id, url, quality, media_type):
 
         output_file = max(
             files,
-            key=lambda p: p.stat().st_mtime
+            key=lambda p: p.stat().st_mtime,
         )
 
-        job["status"] = "finished"
-        job["progress"] = 100
-        job["message"] = "Готово"
-        job["file"] = str(output_file)
-        job["filename"] = output_file.name
+        update_job(
+            job_id,
+            status="finished",
+            progress=100,
+            message="Готово",
+            file=str(output_file),
+            filename=output_file.name,
+        )
 
     except Exception as e:
-        job["status"] = "error"
-        job["message"] = str(e)
+
+        update_job(
+            job_id,
+            status="error",
+            progress=0,
+            message=str(e),
+        )
 
 
 @app.post("/api/download")
 async def start_download(request: DownloadRequest):
+
     try:
         url = normalize_youtube_url(request.url)
+
     except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail=str(e)
+            detail=str(e),
         )
 
     job_id = uuid.uuid4().hex
@@ -343,6 +397,8 @@ async def start_download(request: DownloadRequest):
         "file": None,
         "filename": None,
     }
+
+    save_job(job_id)
 
     asyncio.create_task(
         asyncio.to_thread(
@@ -362,12 +418,13 @@ async def start_download(request: DownloadRequest):
 
 @app.get("/api/progress/{job_id}")
 async def progress(job_id: str):
-    job = jobs.get(job_id)
+
+    job = load_job(job_id)
 
     if not job:
         raise HTTPException(
             status_code=404,
-            detail="Job not found"
+            detail="Job not found",
         )
 
     response = {
@@ -385,18 +442,19 @@ async def progress(job_id: str):
 
 @app.get("/api/file/{job_id}")
 async def get_file(job_id: str):
-    job = jobs.get(job_id)
+
+    job = load_job(job_id)
 
     if not job:
         raise HTTPException(
             status_code=404,
-            detail="Job not found"
+            detail="Job not found",
         )
 
     if job["status"] != "finished":
         raise HTTPException(
             status_code=400,
-            detail="Файл ещё не готов"
+            detail="Файл ещё не готов",
         )
 
     file_path = Path(job["file"])
@@ -404,7 +462,7 @@ async def get_file(job_id: str):
     if not file_path.exists():
         raise HTTPException(
             status_code=404,
-            detail="Файл больше не существует"
+            detail="Файл больше не существует",
         )
 
     return FileResponse(
@@ -416,6 +474,7 @@ async def get_file(job_id: str):
 
 @app.get("/api/debug/yt-dlp")
 async def debug_yt_dlp():
+
     result = subprocess.run(
         [
             "yt-dlp",
